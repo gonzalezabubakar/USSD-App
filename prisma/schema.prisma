@@ -1,0 +1,77 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+
+model farmer {
+  farmer_id     Int @id @default(autoincrement())
+  full_name     String
+  phone_number  String @unique
+  region        String?
+  district      String?
+
+  farms Farm[]
+
+  created_at DateTime @default(now())
+}
+
+model Crop {
+  crop_id    Int    @id @default(autoincrement())
+  crop_name  String
+
+  farms      Farm[]
+}
+
+model Farm {
+  farm_id      Int @id @default(autoincrement())
+
+  farmer_id    Int
+  crop_id      Int
+
+  farm_size    Float?
+
+  farmer Farmer @relation(fields: [farmer_id], references: [farmer_id])
+
+  crop Crop @relation(fields: [crop_id], references: [crop_id])
+
+  advisory_logs AdvisoryLog[]
+}
+
+model ExpertRule {
+  rule_id          Int @id @default(autoincrement())
+
+  symptom_keyword  String
+
+  diagnosis        String
+
+  recommendation   String
+}
+
+model AdvisoryLog {
+
+  log_id Int @id @default(autoincrement())
+
+  farm_id Int
+
+  reported_symptom String
+
+  diagnosis String
+
+  recommendation String
+
+  source String
+
+  created_at DateTime @default(now())
+
+  farm Farm @relation(fields: [farm_id], references: [farm_id])
+}

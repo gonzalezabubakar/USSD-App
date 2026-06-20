@@ -1,0 +1,30 @@
+{
+  "name": "ussd-app",
+  "version": "1.0.0",
+  "description": "un-final year project ",
+  "homepage": "https://github.com/gonzalezabubakar/USSD-App#readme",
+  "bugs": {
+    "url": "https://github.com/gonzalezabubakar/USSD-App/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gonzalezabubakar/USSD-App.git"
+  },
+  "license": "ISC",
+  "author": "abubakari shawa (gonzalez)",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "test": "nodemon server.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.8.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "prisma": "^7.8.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
