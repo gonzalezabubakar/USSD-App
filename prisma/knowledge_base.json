@@ -1,0 +1,20 @@
+[
+  {
+    "crop_name": "Mahindi",
+    "symptom_keyword": "kutoboka majani",
+    "diagnosis": "Funza wa Mahindi (Fall Armyworm)",
+    "recommendation": "Nyunyizia viuatilifu kama Profenofos au Emamectin Benzoate (mfn: Match au Duduba) kwenye kiini cha mmea."
+  },
+  {
+    "crop_name": "Mahindi",
+    "symptom_keyword": "madoa ya manjano",
+    "diagnosis": "Maize Dwarf Mosaic Virus (MDMV)",
+    "recommendation": "Ng'oa na uchome moto mimea iliyoathirika ili kuzuia usambazaji wa virusi."
+  },
+  {
+    "crop_name": "Mpunga",
+    "symptom_keyword": "majani kukauka juu",
+    "diagnosis": "Kimatoke cha Mpunga (Rice Blast)",
+    "recommendation": "Tumia mbegu safi na nyunyizia dawa ya kuvu kama Tricyclazole mapema."
+  }
+]
