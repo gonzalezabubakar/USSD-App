@@ -20,15 +20,17 @@
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
+    "africastalking": "^0.8.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.14",
     "prisma": "6.19.3"
   },
-  "prisma" : {
-    "seed" : "node prisma/seed.js"
+  "prisma": {
+    "seed": "node prisma/seed.js"
   }
 }

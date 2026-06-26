@@ -1,6 +1,8 @@
 // src/controllers/ussd.controller.js
 const prisma = require('../config/prisma');
-const ruleEngine = require('../services/ruleEngine.service'); // Import ya Service yetu mpya
+const ruleEngine = require('../services/ruleEngine.service');
+const smsService =  require('../services/sms.service');
+
 
 exports.handleUssd = async (req, res) => {
     const { sessionId, serviceCode, phoneNumber, text } = req.body;
@@ -120,8 +122,13 @@ exports.handleUssd = async (req, res) => {
                     // HAPA TUNAIITA ILE SERVICE YETU MPYA!
                     const result = await ruleEngine.diagnoseAndLog(chosenFarm.farm_id, reportedSymptom);
 
+                    
+                    // tuma sms kwa mkulima bila kusubiri mtandoa 
+                    //smsService.sendAdvisorySms(phoneNumber, result)
+                    //    .catch(err => console.error("USSD async SMS Error", err.message))
+                        
                     // Mpe mkulima majibu kwenye simu yake
-                    response = `END [Ugonjwa]: ${result.diagnosis}\n[Ushauri]: ${result.recommendation}`;
+                    response = `END Ugonjwa ${result.diagnosis}\n Ushauri ${result.recommendation}`;
                 }
             } else {
                 response = `END Chaguo sio sahihi.`;
