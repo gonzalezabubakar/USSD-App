@@ -99,7 +99,7 @@ async loadRulesFromExcel() {
             console.error("[Database Sync Error]: Kushindwa ku-sync rules:", error.message);
         }
     }
-    
+
     loadFromJsonFallback() {
         try {
             if (fs.existsSync(jsonFilePath)) {
@@ -121,61 +121,94 @@ async loadRulesFromExcel() {
             console.error("[RuleEngine Fallback Error]:", error.message);
         }
     }
-
-    /**
-     * Kuchunguza ugonjwa kulingana na aina ya zao na kuandika log kwenye DATABASE halisi!
+/**
+     * Kusoma dalili za mkulima, kutafuta ugonjwa kwa zao husika kwa kutumia Multiple Keywords,
+     * na kuhifadhi ripoti kamili kwenye database (AdvisoryLog).
+     * 
+     * @param {number} farmId - ID ya shamba la mkulima linalokaguliwa
+     * @param {string} symptom - Sentensi au maneno aliyoandika mkulima kutoka USSD
      */
-    async diagnoseAndLog(farmId, userSymptom, currentCropName = "Mahindi") {
+    async diagnoseAndLog(farmId, symptom) {
+        console.log(`[Database Log]: Inatafuta zao la Shamba ID: ${farmId} ili kuanza ukaguzi...`);
+        
         try {
-            const cleanedSymptom = userSymptom.trim().toLowerCase();
-            const cropTarget = currentCropName.trim().toLowerCase();
+            // 1. TAFUTA ZAO LA SHAMBA HILI (Kutoka kwenye database)
+            // Tunahitaji kupata jina la zao (crop_name) ili tuchuje sheria za zao husika tu
+            const farm = await prisma.farm.findUnique({
+                where: { farm_id: parseInt(farmId) },
+                include: { crop: true } // Hakikisha una include uhusiano wa table ya crop kama ipo
+            });
+
+            if (!farm) {
+                throw new Error(`Shamba lenye ID ${farmId} halikupatikana kwenye database.`);
+            }
+
+            // Kuchukua jina la zao (Kama huna table ya crop na jina lipo moja kwa moja kwenye farm, tumia farm.crop_name)
+            const currentCropName = farm.crop ? farm.crop.crop_name : (farm.crop_name || "");
+            console.log(`[RuleEngine]: Shamba linashughulikia zao la: ${currentCropName}`);
+
+            // 2. KUSAFISHA MANENO YA MKULIMA
+            const cleanedSymptom = symptom.toLowerCase().trim();
             let matchedRule = null;
 
-            // Kutafuta ugonjwa unaoendana kutoka kwenye data za Excel zilizopo kwenye kumbukumbu
-            for (const rule of this.rules) {
-                const ruleCrop = rule.crop_name.toLowerCase();
-                if (ruleCrop === cropTarget && (cleanedSymptom.includes(rule.symptom_keyword) || rule.symptom_keyword.includes(cleanedSymptom))) {
-                    matchedRule = rule;
-                    break;
-                }
+            if (currentCropName) {
+                // 3. TAFUTA SHERIA KWA KUZINGATIA ZAO NA MANENO MENGI YA SIRI (Multiple Keywords)
+                matchedRule = this.rules.find(rule => {
+                    // A) Thibitisha kama sheria hii ya Excel ni ya zao hili la mkulima
+                    const isCorrectCrop = rule.crop_name.toLowerCase() === currentCropName.toLowerCase();
+                    if (!isCorrectCrop) return false;
+
+                    // B) Tenga maneno ya siri ya Excel yaliyotenganishwa kwa mkato (kama: "njano, kukauka")
+                    const keywordsArray = rule.symptom_keyword
+                        .split(',')
+                        .map(k => k.trim().toLowerCase())
+                        .filter(k => k !== ''); // Ondoa nafasi zilizo wazi
+
+                    // C) Angalia kama HATA NENO MOJA kati ya hayo limo ndani ya sentensi ya mkulima
+                    const hasMatchingKeyword = keywordsArray.some(keyword => {
+                        return cleanedSymptom.includes(keyword);
+                    });
+
+                    return hasMatchingKeyword;
+                });
             }
 
-            // Kama hakuna dalili iliyolingana
-            if (!matchedRule) {
-                matchedRule = {
-                    diagnosis: "Haukutambulika mara moja",
-                    recommendation: `Dalili za mmea wa ${currentCropName} hazipo kwenye kanunidata zetu. Taarifa imetumwa kwa Afisa Ugani.`
-                };
-            }
+            // 4. ANDAA MAJIBU YA MFUMO YA KUREJESHA USSD
+            const finalDiagnosis = matchedRule ? matchedRule.diagnosis : "Ugonjwa haukutambulika mara moja";
+            const finalRecommendation = matchedRule ? matchedRule.recommendation : "Dalili za mmea hazipo kwenye kanunidata zetu za sasa. Taarifa imetumwa kwa Afisa Ugani wa eneo lako.";
 
-            console.log(`[Database Log]: Inahifadhi matokeo ya ukaguzi wa Shamba ID: ${farmId} kwenye Database...`);
-            
-            // ========================================================================
-            // SEHEMU YA DATABASE: Hapa tunatunza log kwenye Table yako ya Inspection au Diagnosis
-            // Hakikisha jina la table (mfano: inspectionLog au diagnosisLog) linalingana na schema yako ya Prisma
-            // ========================================================================
-            await prisma.advisoryLog.create({
+            console.log(`[Diagnosis Result]: Ugonjwa -> ${finalDiagnosis}`);
+            console.log(`[Database Log]: Inahifadhi matokeo ya ukaguzi wa Shamba ID: ${farmId} kwenye AdvisoryLog...`);
+
+            // 5. HIFADHI KWENYE DATABASE (AdvisoryLog) - Imeboreshwa kurekebisha 'source is missing' error
+            const savedLog = await prisma.advisoryLog.create({
                 data: {
-                    farm_id: farmId,
-                    reported_symptom: userSymptom,
-                    diagnosis: matchedRule.diagnosis,
-                    recommendation: matchedRule.recommendation,
-                    source: "USSD" // Kujua kama log imetokea USSD au App
+                    farm_id: parseInt(farmId),
+                    reported_symptom: symptom,
+                    diagnosis: finalDiagnosis,
+                    recommendation: finalRecommendation,
+                    source: "USSD" // Inalingana na schema yako sasa hivi herufi kwa herufi!
                 }
             });
 
-            console.log("[Database Log]: Taarifa imehifadhiwa kikamilifu!");
+            console.log(`[Database Log Success]: Log ya ukaguzi imehifadhiwa kwa ID: ${savedLog.log_id}`);
 
+            // 6. REJESHA DATA KWENYE CONTROLLER/USSD ROUTE
             return {
-                diagnosis: matchedRule.diagnosis,
-                recommendation: matchedRule.recommendation
+                success: true,
+                diagnosis: finalDiagnosis,
+                recommendation: finalRecommendation,
+                log_id: savedLog.log_id
             };
 
         } catch (error) {
             console.error("[RuleEngine Diagnose & DB Error]:", error.message);
+            
+            // Rejesha muundo wa dharura (Fallback) ili USSD isicrash na ionyeshe Hitilafu ya Mfumo
             return {
+                success: false,
                 diagnosis: "Hitilafu ya Mfumo",
-                recommendation: "Tafadhali jaribu tena baadae kidogo."
+                recommendation: "Tafadhali jaribu tena baadae kidogo au wasiliana na msaada wa kiufundi."
             };
         }
     }
