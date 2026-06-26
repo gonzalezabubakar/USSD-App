@@ -17,7 +17,7 @@ class RuleEngineService {
      * Kusoma Excel halisi, kutengeneza JSON backup, na KUZISEVU KWENYE DATABASE!
      */
 async loadRulesFromExcel() {
-        console.log("📊 [RuleEngine]: Inajaribu kusoma sheria kutoka kwenye Excel (.xlsx)...");
+        console.log("[RuleEngine]: Inajaribu kusoma sheria kutoka kwenye Excel (.xlsx)...");
 
         try {
             if (fs.existsSync(excelFilePath)) {
@@ -33,7 +33,7 @@ async loadRulesFromExcel() {
                     recommendation: row.recommendation ? row.recommendation.toString().trim() : 'Wasiliana na afisa ugani'
                 })).filter(row => row.symptom_keyword !== '');
 
-                console.log(`✅ [RuleEngine]: Sheria ${this.rules.length} zimesomwa kutoka Excel!`);
+                console.log(`[RuleEngine]: Sheria ${this.rules.length} zimesomwa kutoka Excel!`);
 
                 // 1. ZUIA NODEMON LOOP (Kwa ajili ya faili la JSON tu)
                 let shouldWriteBackup = true;
@@ -46,9 +46,9 @@ async loadRulesFromExcel() {
 
                 if (shouldWriteBackup) {
                     fs.writeFileSync(jsonFilePath, JSON.stringify(this.rules, null, 2), 'utf-8');
-                    console.log("💾 [RuleEngine]: Backup ya rules.json imesasishwa.");
+                    console.log("[RuleEngine]: Backup ya rules.json imesasishwa.");
                 } else {
-                    console.log("⏸️ [RuleEngine]: Hakuna mabadiliko mapya kwenye Excel, JSON haijaandikwa.");
+                    console.log("⏸[RuleEngine]: Hakuna mabadiliko mapya kwenye Excel, JSON haijaandikwa.");
                 }
                 
                 // =======================================================================
@@ -58,39 +58,48 @@ async loadRulesFromExcel() {
                 await this.syncRulesToDatabase();
 
             } else {
-                console.warn("⚠️ [RuleEngine]: Excel haikupatikana, tunasoma JSON ya dharura...");
+                console.warn("[RuleEngine]: Excel haikupatikana, tunasoma JSON ya dharura...");
                 this.loadFromJsonFallback();
             }
         } catch (error) {
-            console.error("❌ [RuleEngine Excel Error]:", error.message);
+            console.error("[RuleEngine Excel Error]:", error.message);
             this.loadFromJsonFallback();
         }
     }
     /**
-     * Mfumo wa kusawazisha (Sync) data za Excel kwenda kwenye Database Table ya expertRule
+     * Mfumo salama na wenye Kasi ya Juu (High Performance Sync)
      */
     async syncRulesToDatabase() {
-        console.log("🔄 [Database Sync]: Inasafisha na kusasisha table ya expertRule kule kwenye Database...");
-        try {
-            // Ili kuzuia data kujirudia rudia kila server ikirestart, tunafuta za zamani kwanza
-            // (Hii inaitwa Truncate/Reset au Fresh Sync)
-            await prisma.expertRule.deleteMany({}); 
+        console.log("[Database Sync]: Inasawazisha sheria kwa kasi ya juu (Bulk Transaction)...");
+        const startTime = Date.now();
 
-            // Ingiza data zote mpya zilizotoka kwenye Excel kwa mkupuo mmoja (Bulk Insert)
-            const createdCount = await prisma.expertRule.createMany({
-                data: this.rules.map(rule => ({ 
-                    // crop_name: rule.crop_name,
-                    symptom_keyword: rule.symptom_keyword,
-                    diagnosis: rule.diagnosis,
-                    recommendation: rule.recommendation
-                }))
+        try {
+            // Badala ya for-loop ya kawaida, tunatengeneza array ya ahadi (Promises)
+            const upsertPromises = this.rules.map(rule => {
+                return prisma.expertRule.upsert({
+                    where: { symptom_keyword: rule.symptom_keyword },
+                    update: {
+                        diagnosis: rule.diagnosis,
+                        recommendation: rule.recommendation
+                    },
+                    create: {
+                        symptom_keyword: rule.symptom_keyword,
+                        diagnosis: rule.diagnosis,
+                        recommendation: rule.recommendation
+                    }
+                });
             });
 
-            console.log(`[Database Sync Success]: Sheria ${createdCount.count} zimesukumwa na kuhifadhiwa kikamilifu kwenye Database table ya expertRule!`);
+            // Tunaziendesha zote kwa pamoja kwa mkupuo mmoja kwenye database
+            await prisma.$transaction(upsertPromises);
+
+            const duration = Date.now() - startTime;
+            console.log(`[Database Sync Success]: Sheria ${this.rules.length} zimesawazishwa salama ndani ya ${duration}ms!`);
         } catch (error) {
-            console.error("[Database Sync Error]: Kushindwa kuhamisha rules kwenda kwenye DB:", error.message);
+            console.error("[Database Sync Error]: Kushindwa ku-sync rules:", error.message);
         }
     }
+    
     loadFromJsonFallback() {
         try {
             if (fs.existsSync(jsonFilePath)) {
@@ -145,17 +154,17 @@ async loadRulesFromExcel() {
             // SEHEMU YA DATABASE: Hapa tunatunza log kwenye Table yako ya Inspection au Diagnosis
             // Hakikisha jina la table (mfano: inspectionLog au diagnosisLog) linalingana na schema yako ya Prisma
             // ========================================================================
-            await prisma.inspectionLog.create({
+            await prisma.advisoryLog.create({
                 data: {
                     farm_id: farmId,
                     reported_symptom: userSymptom,
                     diagnosis: matchedRule.diagnosis,
                     recommendation: matchedRule.recommendation,
-                    channel: "USSD" // Kujua kama log imetokea USSD au App
+                    source: "USSD" // Kujua kama log imetokea USSD au App
                 }
             });
 
-            console.log("✅ [Database Log]: Taarifa imehifadhiwa kikamilifu!");
+            console.log("[Database Log]: Taarifa imehifadhiwa kikamilifu!");
 
             return {
                 diagnosis: matchedRule.diagnosis,
@@ -163,7 +172,7 @@ async loadRulesFromExcel() {
             };
 
         } catch (error) {
-            console.error("❌ [RuleEngine Diagnose & DB Error]:", error.message);
+            console.error("[RuleEngine Diagnose & DB Error]:", error.message);
             return {
                 diagnosis: "Hitilafu ya Mfumo",
                 recommendation: "Tafadhali jaribu tena baadae kidogo."
