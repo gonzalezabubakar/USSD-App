@@ -5,32 +5,53 @@ const fs = require('fs');
 const path = require('path');
 
 async function main() {
-  console.log('Inasoma Knowledge Base kutoka kwenye faili la JSON...');
+  console.log('⚡ [Seed]: Inasoma sheria mpya kutoka kwenye faili la JSON...');
   
-  // Tafuta faili ya JSON lilipo
-  const jsonPath = path.join(__dirname, 'knowledge_base.json');
-  const rawData = fs.readFileSync(jsonPath, 'utf-8');
+  // Tunasoma 'rules.json' iliyotengenezwa kutoka kwenye rules.xlsx
+  // Inatafuta faili lililopo kwenye src/data/rules.json au popote lilipo
+  const jsonPath = path.join(__dirname, '../src/data/rules.json');
+  
+  // Kama rules.json haipo hapo, inarudi kusoma knowledge_base.json ya dharura
+  let finalPath = jsonPath;
+  if (!fs.existsSync(jsonPath)) {
+    console.log('[Onyo]: rules.json haijapatikana, inatumia knowledge_base.json ya dharura...');
+    finalPath = path.join(__dirname, 'knowledge_base.json');
+  }
+
+  const rawData = fs.readFileSync(finalPath, 'utf-8');
   const expertRules = JSON.parse(rawData);
 
-  console.log(`Zimepatikana sheria ${expertRules.length}. Zinasafirishwa kwenda MySQL kwenye model ya ExpertRule...`);
+  console.log(`Zimepatikana sheria ${expertRules.length}. Zinasafirishwa kwenda MySQL...`);
 
-  // Kusukuma data moja baada ya nyingine kwenye database
+  // 2. Kusukuma data moja baada ya nyingine kwenye database
   for (const item of expertRules) {
+    
+    // Kama neno la ugonjwa au jina la zao halipo, tunazuia kosa
+    const crop = item.crop_name || item.crop || 'mahindi';
+    const keyword = item.symptom_keyword || item.keyword || '';
+
+    if (!keyword) {
+      console.log(`Ruka mstari usio na symptom_keyword kwa zao la: ${crop}`);
+      continue; // Inaruka mstari kama hauna neno la dalili ili isivunje database
+    }
+
     await prisma.expertRule.create({
       data: {
-        symptom_keyword: item.symptom_keyword.toLowerCase(), // Inahifadhi kwa herufi ndogo kurahisisha search
-        diagnosis: item.diagnosis,
-        recommendation: item.recommendation
+        // Tunahakikisha crop_name na keyword zinakaa kwa herufi ndogo zilingane na USSD logic
+        crop_name: crop.toLowerCase().trim(),
+        symptom_keyword: keyword.toLowerCase().trim(), 
+        diagnosis: item.diagnosis || 'Ugonjwa haujulikani',
+        recommendation: item.recommendation || 'Wasiliana na afisa ugani wa karibu.'
       }
     });
   }
 
-  console.log('Data zote zimeingia kwenye model ya ExpertRule');
+  console.log('[Seed Success]: Data zote zimesawazishwa vizuri kwenye table ya ExpertRule!');
 }
 
 main()
   .catch((e) => {
-    console.error('Hitilafu wakati wa kuingiza data:', e.message);
+    console.error('Hitilafu kubwa wakati wa kuingiza data:', e.message);
     process.exit(1);
   })
   .finally(async () => {

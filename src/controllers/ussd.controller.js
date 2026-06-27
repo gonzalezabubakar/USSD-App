@@ -119,13 +119,13 @@ exports.handleUssd = async (req, res) => {
                     const chosenFarm = farmer.farms[selectedIndex];
                     const reportedSymptom = textArray[2]; // Yale maneno mkulima aliyoandika
 
-                    // HAPA TUNAIITA ILE SERVICE YETU MPYA!
+                    
                     const result = await ruleEngine.diagnoseAndLog(chosenFarm.farm_id, reportedSymptom);
 
                     
                     // tuma sms kwa mkulima bila kusubiri mtandoa 
-                    //smsService.sendAdvisorySms(phoneNumber, result)
-                    //    .catch(err => console.error("USSD async SMS Error", err.message))
+                    smsService.sendAdvisorySms(phoneNumber, result)
+                        .catch(err => console.error("USSD async SMS Error", err.message))
                         
                     // Mpe mkulima majibu kwenye simu yake
                     response = `END Ugonjwa ${result.diagnosis}\n Ushauri ${result.recommendation}`;

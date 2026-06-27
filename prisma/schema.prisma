@@ -50,7 +50,7 @@ model Farm {
 model ExpertRule {
   rule_id          Int @id @default(autoincrement())
   
-  // crop_name        String
+  crop_name        String
 
   symptom_keyword  String @unique // test mode ya kumentain id kuwa primary key inayo eleweka
 

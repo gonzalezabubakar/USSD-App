@@ -17,7 +17,7 @@ class SmsService {
     async sendAdvisorySms(phoneNumber, diagnosisResult) {
         try {
             // Hapa ndipo unapo-control muundo na lugha ya ujumbe wako kwa urahisi (Template)
-            const message = `Habari Ndugu Mkulima, ripoti yako ya ukaguzi wa shamba:\n\n` +
+            const message = `Habari Ndugu Mkulima,\n\n` +
                             `• UGONJWA: ${diagnosisResult.diagnosis}\n` +
                             `• USHAURI: ${diagnosisResult.recommendation}\n\n` +
                             `Asante kwa kutumia Mfumo wetu wa Kilimo Ushauri.`;
@@ -27,7 +27,7 @@ class SmsService {
             const response = await sms.send({
                 to: [phoneNumber],
                 message: message,
-                // senderId: process.env.AT_SENDER_ID // Kama unayo kutoka TCRA
+                // senderId: process.env.AT_SENDER_ID // kutoka TCRA
             });
 
             console.log("SmsService, SMS imetumwa salama!", response);

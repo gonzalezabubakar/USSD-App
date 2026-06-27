@@ -69,20 +69,28 @@ async loadRulesFromExcel() {
     /**
      * Mfumo salama na wenye Kasi ya Juu (High Performance Sync)
      */
-    async syncRulesToDatabase() {
-        console.log("[Database Sync]: Inasawazisha sheria kwa kasi ya juu (Bulk Transaction)...");
-        const startTime = Date.now();
+async syncRulesToDatabase() {
+        console.log("[Database Sync]: Inasawazisha sheria...");
+        
+        // MTEGO: Angalia kama kuna data yoyote iliyosomwa kutoka kwenye Excel/JSON
+        console.log("[Mtego wa Excel Data]: Data zilizopo ndani ya memory ni:", this.rules);
+
+        if (!this.rules || this.rules.length === 0) {
+            console.log("[Onyo]: Hakuna sheria zilizopatikana kwenye memory! Excel au JSON inaweza ikawa tupu.");
+            return;
+        }
 
         try {
-            // Badala ya for-loop ya kawaida, tunatengeneza array ya ahadi (Promises)
             const upsertPromises = this.rules.map(rule => {
                 return prisma.expertRule.upsert({
                     where: { symptom_keyword: rule.symptom_keyword },
                     update: {
+                        crop_name: rule.crop_name, // Hakikisha na hii ipo kama umeongeza zao!
                         diagnosis: rule.diagnosis,
                         recommendation: rule.recommendation
                     },
                     create: {
+                        crop_name: rule.crop_name,
                         symptom_keyword: rule.symptom_keyword,
                         diagnosis: rule.diagnosis,
                         recommendation: rule.recommendation
@@ -90,13 +98,10 @@ async loadRulesFromExcel() {
                 });
             });
 
-            // Tunaziendesha zote kwa pamoja kwa mkupuo mmoja kwenye database
             await prisma.$transaction(upsertPromises);
-
-            const duration = Date.now() - startTime;
-            console.log(`[Database Sync Success]: Sheria ${this.rules.length} zimesawazishwa salama ndani ya ${duration}ms!`);
+            console.log(`[Database Sync Success]: Sheria zote zimesawazishwa!`);
         } catch (error) {
-            console.error("[Database Sync Error]: Kushindwa ku-sync rules:", error.message);
+            console.error("[Database Sync Error]:", error.message);
         }
     }
 
@@ -166,8 +171,21 @@ async loadRulesFromExcel() {
 
                     // C) Angalia kama HATA NENO MOJA kati ya hayo limo ndani ya sentensi ya mkulima
                     const hasMatchingKeyword = keywordsArray.some(keyword => {
-                        return cleanedSymptom.includes(keyword);
-                    });
+                            // 1. Njia ya Kwanza: Kuangalia kama neno la database limo ndani ya input ya mkulima 
+                            // AU neno la mkulima limo ndani ya database (Inasaidia kama ameandika neno fupi kama "kukauka")
+                            if (cleanedSymptom.includes(keyword) || keyword.includes(cleanSymptom)) {
+                                return true;
+                            }
+
+                            // 2. Njia ya Pili (Akili ya Ziada): Vunja maneno ya mkulima (mfano: "kukauka", "kwa", "majani")
+                            // Piga chujio kuondoa maneno mafupi ya kiunganishi kama "kwa", "ya", "na" (yenye herufi chini ya 3)
+                            const farmerWords = cleanedSymptom.split(' ').filter(w => w.length > 2);
+                            
+                            // Angalia kama kuna neno HATA MOJA kuu la mkulima linalopatikana ndani ya keyword ya database
+                            const wordMatches = farmerWords.some(word => keyword.includes(word));
+                            
+                            return wordMatches;
+                        });
 
                     return hasMatchingKeyword;
                 });

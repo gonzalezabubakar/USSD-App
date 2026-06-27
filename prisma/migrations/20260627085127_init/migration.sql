@@ -32,10 +32,12 @@ CREATE TABLE `Farm` (
 -- CreateTable
 CREATE TABLE `ExpertRule` (
     `rule_id` INTEGER NOT NULL AUTO_INCREMENT,
+    `crop_name` VARCHAR(191) NOT NULL,
     `symptom_keyword` VARCHAR(191) NOT NULL,
     `diagnosis` VARCHAR(191) NOT NULL,
     `recommendation` VARCHAR(191) NOT NULL,
 
+    UNIQUE INDEX `ExpertRule_symptom_keyword_key`(`symptom_keyword`),
     PRIMARY KEY (`rule_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
