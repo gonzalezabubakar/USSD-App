@@ -2,7 +2,7 @@
 const prisma = require('../config/prisma');
 const ruleEngine = require('../services/ruleEngine.service');
 const smsService =  require('../services/sms.service');
-
+const farmHistoryService = require('../services/farmHistory.service'); // <<< 1. INGIZA SERVICE MPYA HAPA
 
 exports.handleUssd = async (req, res) => {
     const { sessionId, serviceCode, phoneNumber, text } = req.body;
@@ -92,10 +92,10 @@ exports.handleUssd = async (req, res) => {
             // CHAGUO 2: OMBA USHAURI WA KILIMO (EXPERT SYSTEM)
             // -------------------------------------------------------------
             else if (textArray[0] === '2') {
-                // Kama hana shamba kabisa, anafukuzwa akasajili shamba kwanza
                 if (farmer.farms.length === 0) {
                     response = `END Samahani, huna shamba lililosajiliwa kwenye mfumo. Tafadhali sajili shamba kwanza ili upate ushauri wa ugonjwa sahihi.`;
                 } 
+                
                 // Hatua ya 1: Onyesha orodha ya mashamba yake
                 else if (textArray.length === 1) {
                     let farmList = `CON Chagua Shamba lako:\n`;
@@ -104,31 +104,67 @@ exports.handleUssd = async (req, res) => {
                     });
                     response = farmList;
                 } 
-                // Hatua ya 2: Mwambie aandike dalili
-                else if (textArray.length === 2) {
+                
+                // 2. IINGIZE LOGIC HAPA: Baada ya kuchagua shamba (textArray.length === 2)
+                else {
                     const selectedIndex = parseInt(textArray[1]) - 1;
                     if (selectedIndex < 0 || selectedIndex >= farmer.farms.length) {
                         response = `END Chaguo la shamba si sahihi. Anza upya.`;
                     } else {
-                        response = `CON Andika kwa kifupi dalili unazoona kwenye mmea (Mfano: madoa ya manjano, majani kukauka):`;
-                    }
-                } 
-                // Hatua ya 3: Piga Rule Engine, pata ugonjwa, andika log, na upe majibu!
-                else if (textArray.length === 3) {
-                    const selectedIndex = parseInt(textArray[1]) - 1;
-                    const chosenFarm = farmer.farms[selectedIndex];
-                    const reportedSymptom = textArray[2]; // Yale maneno mkulima aliyoandika
-
-                    
-                    const result = await ruleEngine.diagnoseAndLog(chosenFarm.farm_id, reportedSymptom);
-
-                    
-                    // tuma sms kwa mkulima bila kusubiri mtandoa 
-                   // smsService.sendAdvisorySms(phoneNumber, result)
-                    //    .catch(err => console.error("USSD async SMS Error", err.message))
+                        const chosenFarm = farmer.farms[selectedIndex];
                         
-                    // Mpe mkulima majibu kwenye simu yake
-                    response = `END Ugonjwa ${result.diagnosis}\n Ushauri ${result.recommendation}`;
+                        // Kagua kama shamba lina ripoti ya ndani ya siku 14
+                        const farmHistory = await farmHistoryService.getRecentFarmHistory(chosenFarm.farm_id);
+
+                        // CHAGUO A: SHAMBA LINA HISTORIA YA KARIBUNI
+                        if (farmHistory) {
+                            if (textArray.length === 2) {
+                                // Mpe ujumbe wa maendeleo ya shamba
+                                response = `CON Shamba lako Wiki iliyopita lilitambuliwa kuwa na ${farmHistory.diagnosis} \n\nJe, hali ikoje sasa?\n1. Bado tatizo lipo (Andika dalili upya)\n2. Shamba limepona kabisa \n3. Kusoma ushauri uliopita`;
+                            } 
+                            // Mkulima amejibu menu ya historia (textArray.length === 3)
+                            else if (textArray.length === 3) {
+                                const historyChoice = textArray[2];
+
+                                if (historyChoice === '1') {
+                                    // Option 1: Bado linaumwa -> Mwambie aandike dalili mpya
+                                    response = `CON Andika kwa kifupi dalili unazoona kwa sasa:`;
+                                } else if (historyChoice === '2') {
+                                    // Option 2: Limepona kabisa -> Sasisha (Siri) na toa ujumbe wa pongezi
+                                    await farmHistoryService.markAsResolved(farmHistory.log_id);
+                                    response = `END Hongera sana, ${firstName}! Tunakutakia mavuno mema kwenye shamba lako la ${chosenFarm.crop.crop_name}.`;
+                                } else if (historyChoice === '3') {
+                                    // Option 3: Kusoma ushauri wa dawa uliopita
+                                    response = `END USHAURI ULIOPITA:\nUgonjwa: ${farmHistory.diagnosis}\nUshauri: ${farmHistory.recommendation}`;
+                                } else {
+                                    response = `END Chaguo si sahihi. Anza upya.`;
+                                }
+                            }
+                            // Mkulima ameandika dalili mpya baada ya kuchagua '1' (textArray.length === 4)
+                            else if (textArray.length === 4 && textArray[2] === '1') {
+                                const reportedSymptom = textArray[3];
+                                const result = await ruleEngine.diagnoseAndLog(chosenFarm.farm_id, reportedSymptom);
+                                
+                                // smsService.sendAdvisorySms(phoneNumber, result).catch(err => console.error(err.message));
+                                response = `END Ugonjwa: ${result.diagnosis}\nUshauri: ${result.recommendation}`;
+                            } else {
+                                response = `END Chaguo si sahihi. Anza upya.`;
+                            }
+                        } 
+                        
+                        // CHAGUO B: SHAMBA HALINA HISTORIA (Mtiririko wako wa asili)
+                        else {
+                            if (textArray.length === 2) {
+                                response = `CON Andika kwa kifupi dalili unazoona kwenye mmea (Mfano: madoa ya manjano, majani kukauka):`;
+                            } else if (textArray.length === 3) {
+                                const reportedSymptom = textArray[2];
+                                const result = await ruleEngine.diagnoseAndLog(chosenFarm.farm_id, reportedSymptom);
+                                
+                                // smsService.sendAdvisorySms(phoneNumber, result).catch(err => console.error(err.message));
+                                response = `END Ugonjwa: ${result.diagnosis}\nUshauri: ${result.recommendation}`;
+                            }
+                        }
+                    }
                 }
             } else {
                 response = `END Chaguo sio sahihi.`;

@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const xlsx = require('xlsx');
-const prisma = require('../config/prisma'); // <<< HAPA: Tumeirudisha Prisma kazini!
+const prisma = require('../config/prisma'); // Prisma
 
 const excelFilePath = path.join(__dirname, '../data/rules.xlsx');
 const jsonFilePath = path.join(__dirname, '../data/rules.json');
@@ -67,12 +67,12 @@ async loadRulesFromExcel() {
         }
     }
     /**
-     * Mfumo salama na wenye Kasi ya Juu (High Performance Sync)
+     * Kasi ya Juu (High Performance Sync)
      */
 async syncRulesToDatabase() {
         console.log("[Database Sync]: Inasawazisha sheria...");
         
-        // MTEGO: Angalia kama kuna data yoyote iliyosomwa kutoka kwenye Excel/JSON
+        // Angalia kama kuna data yoyote iliyosomwa kutoka kwenye Excel/JSON
         console.log("[Mtego wa Excel Data]: Data zilizopo ndani ya memory ni:", this.rules);
 
         if (!this.rules || this.rules.length === 0) {
@@ -133,7 +133,7 @@ async syncRulesToDatabase() {
      * @param {string} symptom - Sentensi au maneno aliyoandika mkulima kutoka USSD
      */
     async diagnoseAndLog(farmId, symptom) {
-        console.log(`🔍 [RuleEngine]: Inatafuta zao la Shamba ID: ${farmId} kuanza ukaguzi yakinifu...`);
+        console.log(`[RuleEngine]: Inatafuta zao la Shamba ID: ${farmId} kuanza ukaguzi yakinifu...`);
         
         try {
             // 1. TAFUTA ZAO LA SHAMBA HILI (Kutoka kwenye database)
