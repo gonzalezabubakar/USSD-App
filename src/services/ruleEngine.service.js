@@ -119,99 +119,106 @@ async syncRulesToDatabase() {
                         symptom_keyword: "kutoboka majani", 
                         diagnosis: "Funza wa Mahindi", 
                         recommendation: "Nyunyizia dawa." 
-                    }
+                    } 
                 ];
             }
         } catch (error) {
             console.error("[RuleEngine Fallback Error]:", error.message);
         }
     }
-/**
-     * Kusoma dalili za mkulima, kutafuta ugonjwa kwa zao husika kwa kutumia Multiple Keywords,
+    /**
+     * Kusoma dalili za mkulima, kutafuta ugonjwa kwa ZAO HUSIKA LA SHAMBA,
      * na kuhifadhi ripoti kamili kwenye database (AdvisoryLog).
-     * 
-     * @param {number} farmId - ID ya shamba la mkulima linalokaguliwa
+     * * @param {number} farmId - ID ya shamba la mkulima linalokaguliwa
      * @param {string} symptom - Sentensi au maneno aliyoandika mkulima kutoka USSD
      */
     async diagnoseAndLog(farmId, symptom) {
-        console.log(`[Database Log]: Inatafuta zao la Shamba ID: ${farmId} ili kuanza ukaguzi...`);
+        console.log(`🔍 [RuleEngine]: Inatafuta zao la Shamba ID: ${farmId} kuanza ukaguzi yakinifu...`);
         
         try {
             // 1. TAFUTA ZAO LA SHAMBA HILI (Kutoka kwenye database)
-            // Tunahitaji kupata jina la zao (crop_name) ili tuchuje sheria za zao husika tu
             const farm = await prisma.farm.findUnique({
                 where: { farm_id: parseInt(farmId) },
-                include: { crop: true } // Hakikisha una include uhusiano wa table ya crop kama ipo
+                include: { crop: true } // Inavuta data kutoka jedwali la Crop
             });
 
             if (!farm) {
                 throw new Error(`Shamba lenye ID ${farmId} halikupatikana kwenye database.`);
             }
 
-            // Kuchukua jina la zao (Kama huna table ya crop na jina lipo moja kwa moja kwenye farm, tumia farm.crop_name)
-            const currentCropName = farm.crop ? farm.crop.crop_name : (farm.crop_name || "");
-            console.log(`[RuleEngine]: Shamba linashughulikia zao la: ${currentCropName}`);
+            // Pata jina la zao na ulifanye kuwa herufi ndogo ili kuzuia migongano
+            const currentCropName = (farm.crop ? farm.crop.crop_name : (farm.crop_name || "")).toLowerCase().trim();
+            console.log(`[RuleEngine]: Shamba lililotambuliwa ni la zao la: "${currentCropName}"`);
 
-            // 2. KUSAFISHA MANENO YA MKULIMA
-            const cleanedSymptom = symptom.toLowerCase().trim();
-            let matchedRule = null;
-
-            if (currentCropName) {
-                // 3. TAFUTA SHERIA KWA KUZINGATIA ZAO NA MANENO MENGI YA SIRI (Multiple Keywords)
-                matchedRule = this.rules.find(rule => {
-                    // A) Thibitisha kama sheria hii ya Excel ni ya zao hili la mkulima
-                    const isCorrectCrop = rule.crop_name.toLowerCase() === currentCropName.toLowerCase();
-                    if (!isCorrectCrop) return false;
-
-                    // B) Tenga maneno ya siri ya Excel yaliyotenganishwa kwa mkato (kama: "njano, kukauka")
-                    const keywordsArray = rule.symptom_keyword
-                        .split(',')
-                        .map(k => k.trim().toLowerCase())
-                        .filter(k => k !== ''); // Ondoa nafasi zilizo wazi
-
-                    // C) Angalia kama HATA NENO MOJA kati ya hayo limo ndani ya sentensi ya mkulima
-                    const hasMatchingKeyword = keywordsArray.some(keyword => {
-                            // 1. Njia ya Kwanza: Kuangalia kama neno la database limo ndani ya input ya mkulima 
-                            // AU neno la mkulima limo ndani ya database (Inasaidia kama ameandika neno fupi kama "kukauka")
-                            if (cleanedSymptom.includes(keyword) || keyword.includes(cleanSymptom)) {
-                                return true;
-                            }
-
-                            // 2. Njia ya Pili (Akili ya Ziada): Vunja maneno ya mkulima (mfano: "kukauka", "kwa", "majani")
-                            // Piga chujio kuondoa maneno mafupi ya kiunganishi kama "kwa", "ya", "na" (yenye herufi chini ya 3)
-                            const farmerWords = cleanedSymptom.split(' ').filter(w => w.length > 2);
-                            
-                            // Angalia kama kuna neno HATA MOJA kuu la mkulima linalopatikana ndani ya keyword ya database
-                            const wordMatches = farmerWords.some(word => keyword.includes(word));
-                            
-                            return wordMatches;
-                        });
-
-                    return hasMatchingKeyword;
-                });
+            if (!currentCropName) {
+                throw new Error(`Shamba hili halina aina ya zao iliyosajiliwa.`);
             }
 
-            // 4. ANDAA MAJIBU YA MFUMO YA KUREJESHA USSD
+            // 2. KUSAFISHA MANENO ALIYOANDIKA MKULIMA KWENYE USSD
+            const cleanedSymptom = symptom.toLowerCase().trim();
+            // Vunja sentensi ya mkulima kuwa maneno na uondoe maneno mafupi (kama "kwa", "ya", "na")
+            const farmerWords = cleanedSymptom.split(/\s+/).filter(w => w.length > 2);
+
+            // 3. VUTA SHERIA KUTOKA DATABASE ZINAZOHUSU ZAO HILI TU 
+            // Hapa ndipo tunapozuia dalili za Mahindi zisiingiliane na za Nyanya au Mpunga!
+            const dbRules = await prisma.expertRule.findMany({
+                where: {
+                    crop_name: currentCropName
+                }
+            });
+
+            console.log(`[RuleEngine]: Zimepatikana sheria ${dbRules.length} kule database zinazohusu zao la "${currentCropName}" pekee.`);
+
+            let matchedRule = null;
+            let highestScore = 0;
+
+            // 4. UCHAMBUZI YAKINIFU (Kupiga hesabu ya mfanano wa maneno kwa zao hili tu)
+            for (const rule of dbRules) {
+                // Vunja maneno ya 'symptom_keyword' ya sheria hii kutoka database
+                const ruleWords = rule.symptom_keyword
+                    .replace(/,/g, ' ') // Geuza mikato kuwa nafasi
+                    .toLowerCase()
+                    .split(/\s+/)
+                    .filter(w => w.length > 2);
+
+                let currentScore = 0;
+
+                // Linganisha neno kwa neno kati ya mkulima na database
+                farmerWords.forEach(fWord => {
+                    ruleWords.forEach(rWord => {
+                        if (rWord.includes(fWord) || fWord.includes(rWord)) {
+                            currentScore += 1; // Ongeza alama kama neno limegusa
+                        }
+                    });
+                });
+
+                // Tafuta ile sheria yenye uzito mkubwa zaidi
+                if (currentScore > highestScore && currentScore > 0) {
+                    highestScore = currentScore;
+                    matchedRule = rule;
+                }
+            }
+
+            // 5. ANDAA MAJIBU YA MFUMO
             const finalDiagnosis = matchedRule ? matchedRule.diagnosis : "Ugonjwa haukutambulika mara moja";
-            const finalRecommendation = matchedRule ? matchedRule.recommendation : "Dalili za mmea hazipo kwenye kanunidata zetu za sasa. Taarifa imetumwa kwa Afisa Ugani wa eneo lako.";
+            const finalRecommendation = matchedRule ? matchedRule.recommendation : `Dalili hizi hazikupata mfanano thabiti kwenye zao la ${currentCropName}. Taarifa imetumwa kwa Afisa Ugani.`;
 
-            console.log(`[Diagnosis Result]: Ugonjwa -> ${finalDiagnosis}`);
-            console.log(`[Database Log]: Inahifadhi matokeo ya ukaguzi wa Shamba ID: ${farmId} kwenye AdvisoryLog...`);
+            console.log(`[Uchambuzi Yakinifu]: Alama: ${highestScore} | Ugonjwa -> ${finalDiagnosis}`);
 
-            // 5. HIFADHI KWENYE DATABASE (AdvisoryLog) - Imeboreshwa kurekebisha 'source is missing' error
+            // 6. HIFADHI RIPOTI KWENYE DATABASE (AdvisoryLog)
             const savedLog = await prisma.advisoryLog.create({
                 data: {
                     farm_id: parseInt(farmId),
                     reported_symptom: symptom,
                     diagnosis: finalDiagnosis,
                     recommendation: finalRecommendation,
-                    source: "USSD" // Inalingana na schema yako sasa hivi herufi kwa herufi!
+                    source: "USSD"
                 }
             });
 
-            console.log(`[Database Log Success]: Log ya ukaguzi imehifadhiwa kwa ID: ${savedLog.log_id}`);
+            console.log(`[AdvisoryLog]: Ripoti imehifadhiwa kwa ID: ${savedLog.log_id}`);
 
-            // 6. REJESHA DATA KWENYE CONTROLLER/USSD ROUTE
+            // 7. REJESHA DATA KWENYE USSD ROUTE
             return {
                 success: true,
                 diagnosis: finalDiagnosis,
@@ -220,13 +227,11 @@ async syncRulesToDatabase() {
             };
 
         } catch (error) {
-            console.error("[RuleEngine Diagnose & DB Error]:", error.message);
-            
-            // Rejesha muundo wa dharura (Fallback) ili USSD isicrash na ionyeshe Hitilafu ya Mfumo
+            console.error("[RuleEngine Critical Error]:", error.message);
             return {
                 success: false,
-                diagnosis: "Hitilafu ya Mfumo",
-                recommendation: "Tafadhali jaribu tena baadae kidogo au wasiliana na msaada wa kiufundi."
+                diagnosis: "Hitilafu ya Uchambuzi",
+                recommendation: "Mfumo umepata kigugumizi wakati wa kuchambua zao. Tafadhali jaribu tena baadae."
             };
         }
     }

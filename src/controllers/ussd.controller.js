@@ -124,8 +124,8 @@ exports.handleUssd = async (req, res) => {
 
                     
                     // tuma sms kwa mkulima bila kusubiri mtandoa 
-                    smsService.sendAdvisorySms(phoneNumber, result)
-                        .catch(err => console.error("USSD async SMS Error", err.message))
+                   // smsService.sendAdvisorySms(phoneNumber, result)
+                    //    .catch(err => console.error("USSD async SMS Error", err.message))
                         
                     // Mpe mkulima majibu kwenye simu yake
                     response = `END Ugonjwa ${result.diagnosis}\n Ushauri ${result.recommendation}`;
