@@ -1,40 +1,44 @@
 // src/services/sms.service.js
 require('dotenv').config();
 
-
 const africastalking = require('africastalking')({
     apiKey: process.env.AT_API_KEY,
     username: process.env.AT_USERNAME
 });
 const sms = africastalking.SMS;
+const { limitMessageLength } = require('../utils/string.util'); // Vuta spana hapa!
 
 class SmsService {
-    /**
-     * Inatuma ushauri wa ugonjwa kwenda kwa mkulima kupitia SMS
-     * @param {string} phoneNumber - Namba ya simu ya mkulima (+255...)
-     * @param {object} diagnosisResult - Jibu lililotoka kwenye RuleEngine ({ diagnosis, recommendation })
-     */
     async sendAdvisorySms(phoneNumber, diagnosisResult) {
         try {
-            // Hapa ndipo unapo-control muundo na lugha ya ujumbe wako kwa urahisi (Template)
-            const message = `Habari Ndugu Mkulima,\n\n` +
-                            `• UGONJWA: ${diagnosisResult.diagnosis}\n` +
-                            `• USHAURI: ${diagnosisResult.recommendation}\n\n` +
-                            `Asante kwa kutumia Mfumo wetu wa Kilimo Ushauri.`;
+            if (!phoneNumber) throw new Error("Namba ya simu haijapatikana.");
 
-            console.log(` SmsService, Inajaribu kutuma SMS kwenda ${phoneNumber}...`);
+            let cleanedPhone = String(phoneNumber).trim();
+            if (cleanedPhone.startsWith('0')) cleanedPhone = '255' + cleanedPhone.substring(1);
+            if (!cleanedPhone.startsWith('+')) cleanedPhone = '+' + cleanedPhone;
+
+            if (cleanedPhone.length < 12) return null;
+
+            // Template yetu safi
+            let rawMessage = `Ndugu mkulima,\n` +
+                             `ugonjwa ni ${diagnosisResult.diagnosis}\n` +
+                             `fata ushauri huu ${diagnosisResult.recommendation}\n` +
+                             `Asante.`;
+
+            // UTUMIAJI WA UTILS: Rahisi, Safi na Inatabirika!
+            const finalMessage = limitMessageLength(rawMessage, 160);
+
+            console.log(`[SmsService]: Inatuma SMS (Herufi: ${finalMessage.length}) kwenda ${cleanedPhone}...`);
 
             const response = await sms.send({
-                to: [phoneNumber],
-                message: message,
-                // senderId: process.env.AT_SENDER_ID // kutoka TCRA
+                to: [cleanedPhone], 
+                message: finalMessage
             });
 
-            console.log("SmsService, SMS imetumwa salama!", response);
+            console.log("[SmsService]: SMS imetumwa salama!", response);
             return response;
         } catch (error) {
-            // Hata kama SMS ikifeli, hatutaki i-crash mfumo mzima wa USSD
-            console.error("SmsService Error Hitilafu wakati wa kutuma SMS:", error.message);
+            console.error("SmsService Error:", error.message);
             return null; 
         }
     }

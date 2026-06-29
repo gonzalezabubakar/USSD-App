@@ -160,7 +160,7 @@ exports.handleUssd = async (req, res) => {
                                 const reportedSymptom = textArray[2];
                                 const result = await ruleEngine.diagnoseAndLog(chosenFarm.farm_id, reportedSymptom);
                                 
-                                // smsService.sendAdvisorySms(phoneNumber, result).catch(err => console.error(err.message));
+                                 smsService.sendAdvisorySms(phoneNumber, result).catch(err => console.error(err.message));
                                 response = `END Ugonjwa: ${result.diagnosis}\nUshauri: ${result.recommendation}`;
                             }
                         }
