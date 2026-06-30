@@ -3,152 +3,93 @@ const fs = require('fs');
 const path = require('path');
 const xlsx = require('xlsx');
 const crypto = require('crypto');
-const { PrismaClient } = require('@prisma/client');
-
-const prisma = new PrismaClient();
-const EXCEL_PATH = path.join(__dirname, '../data/rules.xlsx');
-const BACKUP_JSON_PATH = path.join(__dirname, '../data/rules.json');
-
-// Kikomo cha mabadiliko kabla ya kuruhusu DB i-update (Mistari 5)
-const CHANGE_THRESHOLD = 5; 
+const prisma = require('../config/prisma');
 
 class ExcelSyncService {
-    /**
-     * Inatengeneza alama ya vidole (MD5 Hash) ya faili ili kujua kama limeguswa
-     */
-    getFileHash(filePath) {
-        if (!fs.existsSync(filePath)) return null;
-        const fileBuffer = fs.readFileSync(filePath);
-        return crypto.createHash('md5').update(fileBuffer).digest('hex');
+    constructor() {
+        this.DATA_DIR = path.join(__dirname, '../data');
     }
 
     /**
-     * Mfumo mkuu wa kukagua na kusawazisha Excel
+     * Inatengeneza ID ya kipekee (Hash) kutokana na Zao + Dalili
      */
-    async checkAndProcessRules(isEmergency = false) {
-        console.log("[SyncEngine]: Inakagua mabadiliko ya sheria kutoka kwenye Excel...");
+    generateNaturalKey(cropName, symptomKeyword) {
+        const cleanString = `${cropName.trim().toLowerCase()}_${symptomKeyword.trim().toLowerCase()}`;
+        return crypto.createHash('md5').update(cleanString).digest('hex');
+    }
 
-        if (!fs.existsSync(EXCEL_PATH)) {
-            console.log("⚠️ [SyncEngine]: Excel haipo, mfumo unatumia DB iliyopo sasa.");
-            return;
-        }
+    async syncExcelToDatabase() {
+        console.log("[SmartSync Engine]: Inaanza uchambuzi wa kina wa ma-file ya Excel...");
 
-        const currentHash = this.getFileHash(EXCEL_PATH);
-        const existingMeta = await prisma.fileMeta.findUnique({
-            where: { fileName: 'rules.xlsx' }
-        });
-
-        // Kama hash inafanana, hakuna kilichobadilika kabisa
-        if (existingMeta && existingMeta.lastMd5 === currentHash) {
-            console.log("⚡ [SyncEngine]: Excel haijabadilika. Mfumo upo sawa!");
+        if (!fs.existsSync(this.DATA_DIR)) {
+            console.log("[SmartSync]: Folda la data halipo.");
             return;
         }
 
         try {
-            const workbook = xlsx.readFile(EXCEL_PATH);
-            const sheetName = workbook.SheetNames[0];
-            const rawData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+            const files = fs.readdirSync(this.DATA_DIR)
+                .filter(file => file.endsWith('.xlsx') || file.endsWith('.xls'));
 
-            // MABADILIKO: Kutengeneza rule_id kutokana na Row Number ya Excel
-            const freshExcelRules = rawData.map((row, index) => ({
-                rule_id: index + 2, // index 0 inakuwa Row 2 kwenye Excel
-                crop_name: String(row.crop_name || "").trim().toLowerCase(),
-                symptom_keyword: String(row.symptom_keyword || "").trim().toLowerCase(),
-                diagnosis: String(row.diagnosis || "").trim(),
-                recommendation: String(row.recommendation || "").trim()
-            }));
-
-            // Soma Backup ya JSON ya zamani kuhesabu mabadiliko
-            let currentJsonRules = [];
-            if (fs.existsSync(BACKUP_JSON_PATH)) {
-                currentJsonRules = JSON.parse(fs.readFileSync(BACKUP_JSON_PATH, 'utf-8'));
+            if (files.length === 0) {
+                console.log("[SmartSync]: Hakuna faili lolote la Excel foldani.");
+                return;
             }
 
-            let changeCount = 0;
+            const currentExcelRuleIds = [];
+            let processedRows = 0;
 
-            // Hesabu mabadiliko ya ndani ya mistari au mistari mipya
-            freshExcelRules.forEach(freshRule => {
-                const oldRule = currentJsonRules.find(r => r.rule_id === freshRule.rule_id);
-                if (!oldRule) {
-                    changeCount++;
-                } else if (
-                    oldRule.crop_name !== freshRule.crop_name ||
-                    oldRule.symptom_keyword !== freshRule.symptom_keyword ||
-                    oldRule.diagnosis !== freshRule.diagnosis ||
-                    oldRule.recommendation !== freshRule.recommendation
-                ) {
-                    changeCount++;
+            // 1. Pitia faili moja baada ya jingine 
+            for (const file of files) {
+                const filePath = path.join(this.DATA_DIR, file);
+                const workbook = xlsx.readFile(filePath);
+                const sheetName = workbook.SheetNames[0];
+                const rawData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+                for (const row of rawData) {
+                    if (!row.crop_name || !row.symptom_keyword) continue;
+
+                    const cropName = String(row.crop_name).trim().toLowerCase();
+                    const symptomKeyword = String(row.symptom_keyword).trim().toLowerCase();
+                    const diagnosis = String(row.diagnosis || "").trim();
+                    const recommendation = String(row.recommendation || "").trim();
+
+                    // UCHAWI UPO HAPA: ID inatengenezwa kwa jina la zao na dalili pekee
+                    const ruleId = this.generateNaturalKey(cropName, symptomKeyword);
+                    currentExcelRuleIds.push(ruleId);
+                    processedRows++;
+
+                    // 2. UPSERT: Inatofautisha (Mpya, Iliyobadilika, au Iliyopo tayari) kwa kutumia hii ID thabiti
+                    await prisma.expertRule.upsert({
+                        where: { rule_id: ruleId },
+                        update: {
+                            // Kama ipo tayari lakini maelezo ya ugonjwa/dawa yamebadilika, inasafisha hapa
+                            diagnosis: diagnosis,
+                            recommendation: recommendation
+                        },
+                        create: {
+                            // Kama ni mpya kabisa, inaingiza kila kitu hapa
+                            rule_id: ruleId,
+                            crop_name: cropName,
+                            symptom_keyword: symptomKeyword,
+                            diagnosis: diagnosis,
+                            recommendation: recommendation
+                        }
+                    });
                 }
+            }
+
+            // 3. CLEAN UP: Kama kuna ugonjwa ulifutwa kabisa kwenye Excel zote, ufutwe na DB
+            const deleteResult = await prisma.expertRule.deleteMany({
+                where: { rule_id: { notIn: currentExcelRuleIds } }
             });
 
-            // Angalia kama kuna mistari imefutwa
-            if (currentJsonRules.length > freshExcelRules.length) {
-                changeCount += (currentJsonRules.length - freshExcelRules.length);
-            }
-
-            console.log(`📊 [SyncEngine]: Mabadiliko yaliyopo kwa sasa ni: [${changeCount}]`);
-
-            // AMRI YA KUSUKUMA KWENYE DATABASE
-            if (isEmergency) {
-                console.log("🚨 [SyncEngine]: DHARURA! Inasafisha na ku-update Database sasa hivi...");
-                await this.applyUpdatesToDatabase(freshExcelRules, currentHash, 0);
-            } 
-            else if (changeCount >= CHANGE_THRESHOLD) {
-                console.log(`📈 [SyncEngine]: Mabadiliko yamefika kikomo [${changeCount} >= ${CHANGE_THRESHOLD}]. Inasasisha Database...`);
-                await this.applyUpdatesToDatabase(freshExcelRules, currentHash, 0);
-            } 
-            else {
-                // Kama mabadiliko ni kidogo, yanatunzwa kwenye JSON tu, DB haitishwi!
-                fs.writeFileSync(BACKUP_JSON_PATH, JSON.stringify(freshExcelRules, null, 2));
-                
-                await prisma.fileMeta.upsert({
-                    where: { fileName: 'rules.xlsx' },
-                    update: { pending_changes: changeCount },
-                    create: { fileName: 'rules.xlsx', lastMd5: currentHash, pending_changes: changeCount }
-                });
-
-                console.log(`⏳ [SyncEngine]: Mabadiliko yamehifadhiwa kwenye JSON Backup pekee. Database haijaguswa.`);
-            }
+            console.log(`[SmartSync Engine]: Uchambuzi umekamilika! Mistari iliyochakatwa: [${processedRows}]. Zilizofutwa DB: [${deleteResult.count}].`);
+            return { success: true };
 
         } catch (error) {
-            console.error("❌ [SyncEngine Error]:", error.message);
+            console.error("[SmartSync Critical Error]:", error.message);
+            return { success: false, error: error.message };
         }
-    }
-
-    /**
-     * Kazi ya kuandika rasmi kwenye Database mabadiliko yanapokubalika
-     */
-    async applyUpdatesToDatabase(rules, fileHash, pendingChanges) {
-        fs.writeFileSync(BACKUP_JSON_PATH, JSON.stringify(rules, null, 2));
-        const excelIds = rules.map(r => r.rule_id);
-
-        for (const rule of rules) {
-            if (!rule.crop_name || !rule.symptom_keyword) continue;
-            await prisma.expertRule.upsert({
-                where: { rule_id: rule.rule_id },
-                update: {
-                    crop_name: rule.crop_name,
-                    symptom_keyword: rule.symptom_keyword,
-                    diagnosis: rule.diagnosis,
-                    recommendation: rule.recommendation
-                },
-                create: rule
-            });
-        }
-
-        // Futa sheria zilizofutwa kabisa kwenye Excel
-        await prisma.expertRule.deleteMany({
-            where: { rule_id: { notIn: excelIds } }
-        });
-
-        // Weka sawa Metadata
-        await prisma.fileMeta.upsert({
-            where: { fileName: 'rules.xlsx' },
-            update: { lastMd5: fileHash, pending_changes: pendingChanges },
-            create: { fileName: 'rules.xlsx', lastMd5: fileHash, pending_changes: pendingChanges }
-        });
-
-        console.log("🔥 [SyncEngine]: Database imesasishwa kikamilifu kwa usalama.");
     }
 }
 

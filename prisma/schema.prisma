@@ -48,15 +48,17 @@ model Farm {
 }
 
 model ExpertRule {
-  rule_id          Int @id @default(autoincrement())
+  rule_id          String @id // niweze kutumia Natural Key Hash
   
   crop_name        String
 
-  symptom_keyword  String @unique // test mode ya kumentain id kuwa primary key inayo eleweka
+  symptom_keyword  String // test mode ya kumentain id kuwa primary key inayo eleweka
 
   diagnosis        String
 
   recommendation   String
+
+  @@index([crop_name])
 }
 
 model AdvisoryLog {
@@ -76,4 +78,11 @@ model AdvisoryLog {
   created_at DateTime @default(now())
 
   farm Farm @relation(fields: [farm_id], references: [farm_id])
+}
+
+model FileMeta {
+  id        Int      @id @default(autoincrement())
+  fileName  String   @unique  // inasom "expert_rules.xlsx"
+  lastMd5   String            // Itatunza alama ya vidole ya faili (Hash)
+  updatedAt DateTime @updatedAt
 }

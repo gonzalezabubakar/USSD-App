@@ -135,7 +135,7 @@ class RuleEngineService {
     }
 
     /**
-     * Inakimbiza Gemini AI kwa chini chini (Asynchronously)
+     * Gemini AI kwa chini chini (Asynchronously)
      */
     async executeLongRunningAiProcess(farmId, cropName, symptom, phoneNumber) {
         const aiResult = await geminiService.askFallback(cropName, symptom);
