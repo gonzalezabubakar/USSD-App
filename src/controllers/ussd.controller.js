@@ -1,8 +1,8 @@
-// src/controllers/ussd.controller.js
 const prisma = require('../config/prisma');
 const ruleEngine = require('../services/ruleEngine.service');
 const smsService =  require('../services/sms.service');
-const farmHistoryService = require('../services/farmHistory.service'); // <<< 1. INGIZA SERVICE MPYA HAPA
+const farmHistoryService = require('../services/farmHistory.service');
+const { getHumanReadableTime } = require('../utils/timeFormatter'); // Mahesabu ya muda pekee
 
 exports.handleUssd = async (req, res) => {
     const { sessionId, serviceCode, phoneNumber, text } = req.body;
@@ -13,7 +13,7 @@ exports.handleUssd = async (req, res) => {
         // 1. ANGAZIA KAMA MKULIMA YUPO KWENYE DATABASE
         const farmer = await prisma.farmer.findUnique({
             where: { phone_number: phoneNumber },
-            include: { farms: { include: { crop: true } } } // Leta na mashamba yake yote
+            include: { farms: { include: { crop: true } } } 
         });
 
         // =================================================================
@@ -60,31 +60,63 @@ exports.handleUssd = async (req, res) => {
             } 
             
             // -------------------------------------------------------------
-            // CHAGUO 1: KUSAJILI SHAMBA
+            // CHAGUO 1: KUSAJILI SHAMBA (PAMOJA NA ZAO JINGINE)
             // -------------------------------------------------------------
             else if (textArray[0] === '1') {
                 if (textArray.length === 1) {
-                    response = `CON Chagua aina ya Zao:\n1. Mahindi\n2. Mpunga\n3. Maharagwe`;
-                } else if (textArray.length === 2) {
+                    response = `CON Chagua aina ya Zao:\n1. Mahindi\n2. Mpunga\n3. Maharagwe\n99. Zao Jingine`;
+                } 
+                
+                else if (textArray.length === 2 && textArray[1] === '99') {
+                    response = `CON Andika jina la zao lako (Mfano: Nyanya, Alizeti):`;
+                }
+
+                else if ((textArray.length === 2 && textArray[1] !== '99') || (textArray.length === 3 && textArray[1] === '99')) {
                     response = `CON Weka ukubwa wa shamba (kwa Ekari):`;
-                } else if (textArray.length === 3) {
-                    const cropSelection = textArray[1];
-                    const farmSize = parseFloat(textArray[2]);
+                } 
 
-                    let cropId = 1; let cropName = "Mahindi";
-                    if (cropSelection === '2') { cropId = 2; cropName = "Mpunga"; }
-                    if (cropSelection === '3') { cropId = 3; cropName = "Maharagwe"; }
+                else {
+                    let cropName = "";
+                    let farmSizeInput = "";
 
-                    await prisma.crop.upsert({
-                        where: { crop_id: cropId }, update: {},
-                        create: { crop_id: cropId, crop_name: cropName }
-                    });
+                    if (textArray[1] === '99') {
+                        cropName = String(textArray[2]).trim();
+                        farmSizeInput = textArray[3];
+                    } else {
+                        if (textArray[1] === '1') cropName = "Mahindi";
+                        else if (textArray[1] === '2') cropName = "Mpunga";
+                        else if (textArray[1] === '3') cropName = "Maharagwe";
+                        farmSizeInput = textArray[2];
+                    }
 
-                    await prisma.farm.create({
-                        data: { farmer_id: farmer.farmer_id, crop_id: cropId, farm_size: farmSize }
-                    });
+                    const farmSize = parseFloat(farmSizeInput);
 
-                    response = `END Umefanikiwa kusajili shamba la ${cropName} lenye ukubwa wa ekari ${farmSize}. Ahsante!`;
+                    if (!cropName || isNaN(farmSize)) {
+                        response = `END Data uliyoingiza si sahihi. Jaribu tena.`;
+                    } else {
+                        const cleanCropName = cropName.toLowerCase();
+                        
+                        let crop = await prisma.crop.findFirst({
+                            where: { crop_name: cleanCropName }
+                        });
+
+                        if (!crop) {
+                            crop = await prisma.crop.create({
+                                data: { crop_name: cleanCropName }
+                            });
+                        }
+
+                        await prisma.farm.create({
+                            data: { 
+                                farmer_id: farmer.farmer_id, 
+                                crop_id: crop.crop_id, 
+                                farm_size: farmSize 
+                            }
+                        });
+
+                        const formattedCropName = cropName.charAt(0).toUpperCase() + cropName.slice(1);
+                        response = `END Umefanikiwa kusajili shamba la ${formattedCropName} lenye ukubwa wa ekari ${farmSize}. Ahsante!`;
+                    }
                 }
             } 
             
@@ -96,63 +128,56 @@ exports.handleUssd = async (req, res) => {
                     response = `END Samahani, huna shamba lililosajiliwa kwenye mfumo. Tafadhali sajili shamba kwanza ili upate ushauri wa ugonjwa sahihi.`;
                 } 
                 
-                // Hatua ya 1: Onyesha orodha ya mashamba yake
                 else if (textArray.length === 1) {
                     let farmList = `CON Chagua Shamba lako:\n`;
                     farmer.farms.forEach((farm, index) => {
-                        farmList += `${index + 1}. Shamba la ${farm.crop.crop_name} (${farm.farm_size} Ekari)\n`;
+                        const formattedName = farm.crop.crop_name.charAt(0).toUpperCase() + farm.crop.crop_name.slice(1);
+                        farmList += `${index + 1}. Shamba la ${formattedName} (${farm.farm_size} Ekari)\n`;
                     });
                     response = farmList;
                 } 
                 
-                // 2. IINGIZE LOGIC HAPA: Baada ya kuchagua shamba (textArray.length === 2)
                 else {
                     const selectedIndex = parseInt(textArray[1]) - 1;
                     if (selectedIndex < 0 || selectedIndex >= farmer.farms.length) {
                         response = `END Chaguo la shamba si sahihi. Anza upya.`;
                     } else {
                         const chosenFarm = farmer.farms[selectedIndex];
-                        
-                        // Kagua kama shamba lina ripoti ya ndani ya siku 14
                         const farmHistory = await farmHistoryService.getRecentFarmHistory(chosenFarm.farm_id);
 
                         // CHAGUO A: SHAMBA LINA HISTORIA YA KARIBUNI
                         if (farmHistory) {
                             if (textArray.length === 2) {
-                                // Mpe ujumbe wa maendeleo ya shamba
-                                response = `CON Shamba lako Wiki iliyopita lilitambuliwa kuwa na ${farmHistory.diagnosis} \n\nJe, hali ikoje sasa?\n1. Bado tatizo lipo (Andika dalili upya)\n2. Shamba limepona kabisa \n3. Kusoma ushauri uliopita`;
+                                // Hapa tunapiga hesabu za uhalisia wa muda uliopita
+                                const timeAgo = getHumanReadableTime(farmHistory.created_at);
+
+                                response = `CON ${timeAgo}, shamba hili lilitambuliwa kuwa na ${farmHistory.diagnosis}\n\nJe, hali ikoje sasa?\n1. Bado tatizo lipo (Andika dalili upya)\n2. Shamba limepona kabisa \n3. Kusoma ushauri uliopita`;
                             } 
-                            // Mkulima amejibu menu ya historia (textArray.length === 3)
                             else if (textArray.length === 3) {
                                 const historyChoice = textArray[2];
 
                                 if (historyChoice === '1') {
-                                    // Option 1: Bado linaumwa -> Mwambie aandike dalili mpya
                                     response = `CON Andika kwa kifupi dalili unazoona kwa sasa:`;
                                 } else if (historyChoice === '2') {
-                                    // Option 2: Limepona kabisa -> Sasisha (Siri) na toa ujumbe wa pongezi
                                     await farmHistoryService.markAsResolved(farmHistory.log_id);
-                                    response = `END Hongera sana, ${firstName}! Tunakutakia mavuno mema kwenye shamba lako la ${chosenFarm.crop.crop_name}.`;
+                                    const formattedName = chosenFarm.crop.crop_name.charAt(0).toUpperCase() + chosenFarm.crop.crop_name.slice(1);
+                                    response = `END Hongera sana, ${firstName}! Tunakutakia mavuno mema kwenye shamba lako la ${formattedName}.`;
                                 } else if (historyChoice === '3') {
-                                    // Option 3: Kusoma ushauri wa dawa uliopita
                                     response = `END USHAURI ULIOPITA:\nUgonjwa: ${farmHistory.diagnosis}\nUshauri: ${farmHistory.recommendation}`;
                                 } else {
                                     response = `END Chaguo si sahihi. Anza upya.`;
                                 }
                             }
-                            // Mkulima ameandika dalili mpya baada ya kuchagua '1' (textArray.length === 4)
                             else if (textArray.length === 4 && textArray[2] === '1') {
                                 const reportedSymptom = textArray[3];
                                 const result = await ruleEngine.diagnoseAndLog(chosenFarm.farm_id, reportedSymptom);
-                                
-                                // smsService.sendAdvisorySms(phoneNumber, result).catch(err => console.error(err.message));
                                 response = `END Ugonjwa: ${result.diagnosis}\nUshauri: ${result.recommendation}`;
                             } else {
                                 response = `END Chaguo si sahihi. Anza upya.`;
                             }
                         } 
                         
-                        // CHAGUO B: SHAMBA HALINA HISTORIA (Mtiririko wako wa asili)
+                        // CHAGUO B: SHAMBA HALINA HISTORIA
                         else {
                             if (textArray.length === 2) {
                                 response = `CON Andika kwa kifupi dalili unazoona kwenye mmea (Mfano: madoa ya manjano, majani kukauka):`;
@@ -160,7 +185,7 @@ exports.handleUssd = async (req, res) => {
                                 const reportedSymptom = textArray[2];
                                 const result = await ruleEngine.diagnoseAndLog(chosenFarm.farm_id, reportedSymptom);
                                 
-                                 smsService.sendAdvisorySms(phoneNumber, result).catch(err => console.error(err.message));
+                                smsService.sendAdvisorySms(phoneNumber, result).catch(err => console.error(err.message));
                                 response = `END Ugonjwa: ${result.diagnosis}\nUshauri: ${result.recommendation}`;
                             }
                         }
