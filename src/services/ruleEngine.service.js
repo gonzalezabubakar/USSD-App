@@ -149,7 +149,7 @@ class RuleEngineService {
                 reported_symptom: symptom,
                 diagnosis: finalDiagnosis,
                 recommendation: finalRecommendation,
-                source: "USSD_GEMINI_FALLBACK_ASYNC"
+                source: "USSD_GEMINI_FALLBACK"
             }
         });
 

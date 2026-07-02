@@ -6,7 +6,7 @@ const africastalking = require('africastalking')({
     username: process.env.AT_USERNAME
 });
 const sms = africastalking.SMS;
-const { limitMessageLength } = require('../utils/string.util'); // Vuta spana hapa!
+const { limitMessageLength } = require('../utils/string.util');
 
 class SmsService {
     async sendAdvisorySms(phoneNumber, diagnosisResult) {
@@ -19,14 +19,21 @@ class SmsService {
 
             if (cleanedPhone.length < 12) return null;
 
-            // Template yetu safi
-            let rawMessage = `Ndugu mkulima,\n` +
-                             `ugonjwa ni ${diagnosisResult.diagnosis}\n` +
-                             `fata ushauri huu ${diagnosisResult.recommendation}\n` +
-                             `Asante.`;
+            let finalMessage = "";
 
-            // UTUMIAJI WA UTILS: Rahisi, Safi na Inatabirika!
-            const finalMessage = limitMessageLength(rawMessage, 160);
+            // Kama ujumbe umetoka kwa Gemini (una neno TAHADHARI), tunautuma mzima kama ulivyo
+            if (diagnosisResult.recommendation && diagnosisResult.recommendation.includes("TAHADHARI")) {
+                finalMessage = diagnosisResult.recommendation;
+            } else {
+                // Kama ni majibu ya kawaida ya USSD (Reactive mode), tunatumia muundo wa kawaidi
+                let rawMessage = `Ndugu mkulima,\n` +
+                                 `ugonjwa ni ${diagnosisResult.diagnosis}\n` +
+                                 `muhimu ushauri huu ${diagnosisResult.recommendation}\n` +
+                                 `Asante.`;
+                
+                // Tunalimit herufi 160 kwa jumbe za kawaida za USSD tu
+                finalMessage = limitMessageLength(rawMessage, 160);
+            }
 
             console.log(`[SmsService]: Inatuma SMS (Herufi: ${finalMessage.length}) kwenda ${cleanedPhone}...`);
 
