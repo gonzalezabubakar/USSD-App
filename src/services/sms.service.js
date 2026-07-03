@@ -10,6 +10,8 @@ const { limitMessageLength } = require('../utils/string.util');
 
 class SmsService {
     async sendAdvisorySms(phoneNumber, diagnosisResult) {
+        const timestamp = new Date().toISOString();
+        console.log(`sms services ${timestamp} imetuma sms kwenda ${phoneNumber}`)
         try {
             if (!phoneNumber) throw new Error("Namba ya simu haijapatikana.");
 
@@ -28,7 +30,7 @@ class SmsService {
                 // Kama ni majibu ya kawaida ya USSD (Reactive mode), tunatumia muundo wa kawaidi
                 let rawMessage = `Ndugu mkulima,\n` +
                                  `ugonjwa ni ${diagnosisResult.diagnosis}\n` +
-                                 `muhimu ushauri huu ${diagnosisResult.recommendation}\n` +
+                                 `muhimu kufata ushauri huu ${diagnosisResult.recommendation}\n` +
                                  `Asante.`;
                 
                 // Tunalimit herufi 160 kwa jumbe za kawaida za USSD tu

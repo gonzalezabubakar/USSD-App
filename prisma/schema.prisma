@@ -67,6 +67,8 @@ model AdvisoryLog {
 
   farm_id Int
 
+  rawSymptomQuery String   @db.Text @default("") // Inatunza sentensi nzima aliyoandika na mkulima
+
   reported_symptom String
 
   diagnosis String
