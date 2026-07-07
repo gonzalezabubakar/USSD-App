@@ -114,7 +114,7 @@ exports.checkAndSendProactiveAlerts = async () => {
                         userStyle: 'LOW_AWARENESS'
                     });
 
-                    console.log(`🚀 Inarusha SMS kwenda kwa: ${farmer.full_name} (${farmer.phone_number})`);
+                    console.log(`Inarusha SMS kwenda kwa: ${farmer.full_name} (${farmer.phone_number})`);
 
                     // Tuma SMS kupitia huduma yako ya Africa's Talking
                     await smsService.sendAdvisorySms(farmer.phone_number, {

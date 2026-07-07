@@ -10,6 +10,38 @@ class RuleEngineService {
         this.AI_TIMEOUT_MS = 3500; 
     }
 
+    // NJIA YA 3: Intent Classification (Kutambua mkulima anataka nini kabla ya AI)
+    classifyIntent(symptomText) {
+        const text = symptomText.toLowerCase().trim();
+        if (text.match(/\b(habari|shikamoo|mambo|vip|hello|hi|asante|shukrani)\b/)) {
+            return "SALAMU";
+        }
+        if (text.match(/\b(mbolea|dap|urea|minjingu|kupanda|nafasi|shamba|tengeneza)\b/)) {
+            return "KILIMO_BORA";
+        }
+        return "UTAMBUZI_UGONJWA";
+    }
+
+    // NJIA YA 1: Local RAG/Database Context Lookup
+    async findLocalContext(symptomText) {
+        try {
+            const words = symptomText.toLowerCase().trim().split(/\s+/);
+            
+            // Tunatafuta kwenye ExpertRule kama kuna maneno yoyote ya mkulima yanayoshabihiana
+            const matchedRule = await prisma.expertRule.findFirst({
+                where: {
+                    OR: words.map(word => ({
+                        symptom_keyword: { contains: word }
+                    }))
+                }
+            });
+            return matchedRule; 
+        } catch (error) {
+            console.error("[RAG Lookup Error]:", error.message);
+            return null;
+        }
+    }
+
     async diagnoseAndLog(farmId, symptom) {
         console.log(`[RuleEngine]: Inachakata Shamba ID: ${farmId}`);
         const parsedFarmId = parseInt(farmId);
@@ -24,7 +56,18 @@ class RuleEngineService {
             const currentCropName = (farm.crop ? farm.crop.crop_name : (farm.crop_name || "")).toLowerCase().trim();
             const farmerPhoneNumber = farm.farmer ? farm.farmer.phone_number : null;
 
-            // 1. ANZA NA EXPERT RULES (LOCAL DATABASE / EXCEL DATA)
+            // Chakata Intent ya maneno ya mkulima
+            const intent = this.classifyIntent(symptom);
+            if (intent === "SALAMU") {
+                return {
+                    success: true,
+                    show_on_menu: false,
+                    diagnosis: "Karibu MSWAHILI AI",
+                    recommendation: "Habari msimamizi! Andika dalili za zao lako (mfano: mahindi yana viwavi) ili kupata ushauri wa haraka."
+                };
+            }
+
+            // 1. ANZA NA EXPERT RULES (FUZZY MATCHING YA SASA)
             const dbRules = await prisma.expertRule.findMany({ where: { crop_name: currentCropName } });
             let matchedRule = null;
             let highestScore = 0;
@@ -37,12 +80,11 @@ class RuleEngineService {
                 }
             }
 
-            // Kama tumepata sheria ya ndani, tunahifadhi na kurudisha majibu hapo hapo
             if (highestScore > 0 && matchedRule) {
                 return await this.handleExpertRuleMatch(parsedFarmId, matchedRule, farmerPhoneNumber, symptom);
             } 
             
-            // 2. KAMA LOCAL RULES ZIMEGOMA -> PELEKA KWA GEMINI AI 
+            // 2. KAMA ZIMETIME-OUT / ZIMEGOMA -> Washa RAG + AI Fallback
             return await this.handleAiFallbackWithTimeout(parsedFarmId, farm.crop.crop_name, symptom, farmerPhoneNumber);
 
         } catch (error) {
@@ -51,9 +93,6 @@ class RuleEngineService {
         }
     }
 
-    /**
-     * Inashughulikia majibu yaliyopatikana kwenye Local Database (Expert Rules)
-     */
     async handleExpertRuleMatch(farmId, rule, phoneNumber, rawQuery) {
         const savedLog = await prisma.advisoryLog.create({
             data: {
@@ -66,13 +105,6 @@ class RuleEngineService {
             }
         });
 
-        // if (phoneNumber) {
-        //     smsService.sendAdvisorySms(phoneNumber, {
-        //         diagnosis: rule.diagnosis,
-        //         recommendation: rule.recommendation
-        //     }).catch(err => console.error("SMS Error (Expert Rule):", err.message));
-        // }
-
         return {
             success: true,
             show_on_menu: true,
@@ -82,20 +114,23 @@ class RuleEngineService {
         };
     }
 
-    /**
-     * Inashughulikia upigaji wa Gemini AI kwa uangalizi wa Wrapper ya Timeout
-     */
     async handleAiFallbackWithTimeout(farmId, cropName, symptom, phoneNumber) {
-        console.log(`[RuleEngine]: Maneno hayapo kwenye sheria za ndani. Inaita Gemini AI...`);
+        console.log(`[RuleEngine]: Maneno hayapo kwenye sheria za ndani. Inatafuta Local Context & Inaita Gemini AI...`);
+
+        // Vuta muktadha wa ndani (Local RAG Context)
+        const localContext = await this.findLocalContext(symptom);
+        let contextText = "";
+        if (localContext) {
+            contextText = `Muktadha: Zao la ${cropName} lina tatizo linalohusiana na ${localContext.symptom_keyword}. Ushauri wetu wa ndani: ${localContext.recommendation}`;
+        }
 
         try {
-            // Jaribu kupiga AI na uisubiri kwa sekunde 3.5
+            // Kupiga AI (Tunapitisha context sasa hivi kusaidia Gemini asikwame)
             const aiResult = await runWithTimeout(
-                geminiService.askUssdFallback(cropName, symptom), 
+                geminiService.askUssdFallback(cropName, `${symptom}. ${contextText}`), 
                 this.AI_TIMEOUT_MS
             );
             
-            // JIBU LA KWANZA: Kama AI imejibu haraka chini ya sekunde 3.5
             if (aiResult) {
                 const savedLog = await prisma.advisoryLog.create({
                     data: {
@@ -104,7 +139,7 @@ class RuleEngineService {
                         rawSymptomQuery: symptom,   
                         diagnosis: aiResult.diagnosis,
                         recommendation: aiResult.recommendation,
-                        source: "USSD_GEMINI_FAST" // Hii imejibu fasta kwenye screen ya USSD
+                        source: "USSD_GEMINI_FAST"
                     }
                 });
 
@@ -114,71 +149,90 @@ class RuleEngineService {
 
                 return {
                     success: true,
-                    show_on_menu: false, // Itaonekana kwenye screen ya USSD
+                    show_on_menu: false,
                     diagnosis: aiResult.diagnosis,
                     recommendation: aiResult.recommendation,
                     log_id: savedLog.log_id || savedLog.id
                 };
             }
         } catch (error) {
-            // JIBU LA PILI: AI IMECHELEWA (TIMEOUT/CATCH)
-            // Hapa hatuandiki kabisa ujumbe wa tahadhari kwenye Database!
-            console.warn("[RuleEngine]: AI imezidi muda. Inahamishiwa background processing...");
+            console.warn("[RuleEngine]: AI imezidi muda au ina hitilafu. Inahamishiwa background processing...");
             
-            // Washa mchakato wa chini chini wa Gemini na SMS halisi
-            this.executeLongRunningAiProcess(farmId, cropName, symptom, phoneNumber).catch(err => {
+            // Washa mchakato wa chini chini - TUMEONDOA KOSA LA VARIABLE
+            this.executeLongRunningAiProcess(farmId, cropName, symptom, phoneNumber, localContext).catch(err => {
                 console.error("[Background AI Async Error]:", err.message);
             });
 
-            // Tunamrudishia tu mtumiaji ujumbe wa kistaarabu bila kuharibu DB wala kukata text
             return {
                 success: true,
-                show_on_menu: false, // Inaiambia controller isionyeshe jibu la ugonjwa lililokatwa
+                show_on_menu: false, 
                 diagnosis: "Uchambuzi wa AI Unaendelea",
                 recommendation: "Mifumo yetu inachakata changamoto hii kupitia AI kwa sasa. Utatumiwa ujumbe mfupi (SMS) wenye majibu sahihi ya ugonjwa, dozi na dawa kwenye simu yako ndani ya muda mfupi. Ahsante!"
             };
         }
     }
 
-    /**
-     * Mchakato wa Gemini AI wa chini chini (Asynchronously) na utumaji wa SMS halisi
-     */
-    async executeLongRunningAiProcess(farmId, cropName, symptom, phoneNumber) {
+    async executeLongRunningAiProcess(farmId, cropName, symptom, phoneNumber, localContext) {
         try {
-            // Hapa background inaendelea kusubiri jibu halisi la Gemini hata likichukua sekunde 6 au 8
-            const aiResult = await geminiService.askUssdFallback(cropName, symptom);
-            
-            if (!aiResult) throw new Error("Gemini hakurudisha jibu lolote la maana mazingira ya nyuma.");
+            let aiResult;
+            let contextText = localContext ? `Ushauri wa Ndani: ${localContext.recommendation}` : "";
 
-            // HAPA NDIPO TUNAPOHIFADHI DATA SAHIHI! Mzizi wa jibu haupotei
+            try {
+                // Kujaribu kupiga Gemini kwa mazingira ya nyuma
+                aiResult = await geminiService.askUssdFallback(cropName, `${symptom}. ${contextText}`);
+            } catch (geminiError) {
+                console.error(`[Gemini SMS Fallback Error]: ${geminiError.message}`);
+                // UKIKUTANA NA 429 AU 503: Kama kuna localContext, itumie hiyo hiyo badala ya kufeli!
+                if (localContext) {
+                    aiResult = {
+                        diagnosis: localContext.diagnosis || "Changamoto ya Zao",
+                        recommendation: localContext.recommendation
+                    };
+                } else {
+                    throw geminiError; // Hakuna data ya ndani, rusha kosa kwenda kwenye catch kuu
+                }
+            }
+            
+            if (!aiResult) throw new Error("Gemini na Local DB zote zimeshindwa kurudisha jibu.");
+
+            let finalDiagnosis = "Ushauri wa Jumla";
+            let finalRecommendation = "Kagua shamba lako au wasiliana na afisa ugani.";
+
+            if (typeof aiResult === 'object' && aiResult !== null) {
+                finalDiagnosis = aiResult.diagnosis || "Ushauri wa Kilimo";
+                finalRecommendation = aiResult.recommendation || "Kagua shamba.";
+            } else if (typeof aiResult === 'string') {
+                finalRecommendation = aiResult;
+            }
+
+            //SULUHISHO: `farmId` sasa ni dynamic, na `symptomKeyword` imerekebishwa kuwa `symptom`
             await prisma.advisoryLog.create({
                 data: {
-                    farm_id: farmId,
-                    reported_symptom: symptom,  
-                    rawSymptomQuery: symptom,   
-                    diagnosis: aiResult.diagnosis,
-                    recommendation: aiResult.recommendation,
+                    farm_id: farmId, 
+                    reported_symptom: symptom.substring(0, 190),
+                    rawSymptomQuery: symptom.substring(0, 190),
+                    diagnosis: String(finalDiagnosis), 
+                    recommendation: String(finalRecommendation),
                     source: "USSD_GEMINI_BACKGROUND"
                 }
             });
 
-            // Tuma SMS ya jibu halisi lililotoka kwa Gemini na sio ujumbe wa tahadhari!
+            //SULUHISHO: Tumeondoa duplicate ya `smsService.sendAdvisorySms`
             if (phoneNumber) {
                 await smsService.sendAdvisorySms(phoneNumber, {
-                    diagnosis: aiResult.diagnosis,
-                    recommendation: aiResult.recommendation
+                    diagnosis: finalDiagnosis,
+                    recommendation: finalRecommendation
                 });
-                console.log(`[Background AI]: SMS ya majibu halisi imetumwa kwa ${phoneNumber}`);
+                console.log(`[Background AI]: SMS ya majibu halisi imetumwa salama kwa ${phoneNumber}`);
             }
 
         } catch (err) {
             console.error("[Background AI Critical Failure]:", err.message);
-            // Ikishindikana kabisa hata huku nyuma, ndio unaweka fallback ya mfumo mzima
             if (phoneNumber) {
                 await smsService.sendAdvisorySms(phoneNumber, {
                     diagnosis: "Uchunguzi Haukukamilika",
                     recommendation: "Tafadhali andika dalili za zao lako kwa kutumia maneno mepesi au wasiliana na afisa ugani wa karibu."
-                }).catch(e => console.error(e.message));
+                }).catch(e => console.error("SMS Fallback Error:", e.message));
             }
         }
     }

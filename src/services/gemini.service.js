@@ -11,54 +11,75 @@ class GeminiService {
     /**
      * Mapigo ya USSD Fallback
      */
-    async askUssdFallback(cropName, symptom) {
-        if (!this.ai) {
-            console.warn("[Gemini Service]: GEMINI_API_KEY haijasetiwa kwenye .env");
-            return this.getFallbackResponse(cropName);
-        }
-
+        async askUssdFallback(cropName, symptomKeyword) {
         try {
-            console.log(`[Gemini Service]: Inapiga AI USSD Fallback kwa zao la ${cropName}...`);
-            
-            // 1. REKEBISHO: Tunatumia gemini-2.5-flash ambayo ndiyo stable na inayokubalika sasa
-            const model = this.ai.getGenerativeModel({ model: "gemini-2.5-flash" });
+            if (!this.ai) return this.getFallbackResponse(cropName);
 
-            const prompt = `Wewe ni Afisa Ugani wa mwenye uwezo na uzoefu wa mika mingi zaidi ya 45 nchini Tanzania. Mkulima wa zao la "${cropName}" ametuma ujumbe huu wa dalili kupitia USSD: "${symptom}".
-            Toa utambuzi wa dharura (Diagnosis) na ushauri wa dawa au matibabu (Recommendation).
-            
-            MASHARTI YA ZIADA:
-            1. Jibu kwa Kiswahili rahisi cha kijijini, kifupi sana kinachofaa mkulima kulewa usiari kuhusu aina ya technology anayo tumia.
-            2. Usiweke alama za herufi nzito (bold **), nyota, au urembo wowote wa maandishi.
-            3. Usiweke salamu (kama "Habari", "Pole"), usilete utangulizi wala mbwembwe.
-            4. Muundo wa jibu lako lazima uwe katika JSON format yenye key mbili tu: 'diagnosis' na 'recommendation'.
-            5. Jumla ya herufi zote isizidi 130 ili isikate USSD session.
+            const systemInstruction = `Wewe ni mtaalamu wa kilimo na daktari wa mimea nchini Tanzania.
+Mkulima wa "${cropName}" ameeleza changamoto yake hivi: "${symptomKeyword}".
+Hili swali halipo kwenye database yetu ya Expert Rules, hivyo fanya uchunguzi (Diagnosis) wa muda.
 
-            Muundo wa JSON pekee: {"diagnosis": "Jina la ugonjwa", "recommendation": "Ushauri mfupi ya hatua ya kuchukua"}`;
+SHERIA KALI ZA MUUNDO (JSON ONLY):
+1. diagnosis: Uchambue ugonjwa au tatizo hasa kulingana na swali la mkulima. USIANDIKE "Ushauri wa Jumla" wala "Tatizo la ${cropName}". 
+   - Mfano kama mkulima kasema "dumaa" au "poteza ukijani", andika "Njaa ya mimea mahindini" au "Upungufu wa Nitrojeni".
+   - Kichwa hiki kiwe kifupi mno (Herufi zisizozidi 25) kwa ajili ya safu ya database.
+2. sms_content: Huu ni ushauri wa tiba ya haraka utakaenda kwenye simu ya mkulima. 
+   - USIANDIKE maneno "Ugonjwa:" au "Tiba:". Tiririsha ujumbe kama ushauri mmoja ulioshikana.
+   - UREFU: Usizidi herufi 130. Taja dawa moja au hatua moja kuu ya haraka. Viondoe vipimo kama (10ml/20L).
 
-            const result = await model.generateContent(prompt);
-            const rawResponse = result.response.text().trim();
+MUUNDO LAZIMA UWE JSON PEKEE:
+{
+  "diagnosis": "Kichwa mahususi cha tatizo la mkulima",
+  "sms_content": "Ujumbe mfupi ulionyooka wa SMS kwenda kwa mkulima"
+}`;
+
+            const prompt = `Zao: ${cropName}. Dalili ya mkulima: "${symptomKeyword}". 
+Tengeneza muundo sahihi wa JSON kulingana na maelekezo.`;
+
+            const model = this.ai.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+            const result = await model.generateContent({
+                contents: [{ role: 'user', parts: [{ text: `${systemInstruction}\n\n${prompt}` }] }],
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    temperature: 0.2
+                }
+            });
+
+            const responseText = result.response.text().trim();
+            const cleanData = JSON.parse(responseText);
             
-            const cleanedJson = rawResponse.replace(/```json/g, "").replace(/```/g, "").trim();
-            return JSON.parse(cleanedJson);
+            // Tunarudisha Object nzima sasa hivi ili aiAdvisor.service.js ipate zote mbili
+            return {
+                diagnosis: cleanData.diagnosis || `Shida ya ${cropName}`,
+                recommendation: cleanData.sms_content || "Kagua shamba lako au wasiliana na afisa ugani."
+            };
+
         } catch (error) {
-            console.error("[Gemini Service USSD Fallback Error]:", error.message);
-            // 2. ULINZI: API ikifeli, tunarudisha Object halali badala ya null ili kuzuia "Cannot read properties of undefined"
+            console.error("[Gemini SMS Fallback Error]:", error.message);
             return this.getFallbackResponse(cropName);
         }
     }
-
     /**
      * Kutengeneza SMS za Tahadhari (Proactive Alerts)
      */
     async generateSmsAlert({ systemInstruction, prompt }) {
         if (!this.ai) return null;
         try {
-            // Tunatumia mabadiliko ya model hapa pia
+            console.log("[Gemini Service]: Inatengeneza SMS Alert...");
+            
             const model = this.ai.getGenerativeModel({ 
-                model: "gemini-2.5-flash",
+                model: "gemini-2.5-flash-lite",
                 systemInstruction: systemInstruction
             });
-            const result = await model.generateContent(prompt);
+            
+            // REKEBISHO LA MUUNDO WA GOOGLE SDK HAPA PIA:
+            const result = await model.generateContent({
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                generationConfig: {
+                    temperature: 0.2
+                }
+            });
+            
             return result.response.text().trim();
         } catch (error) {
             console.error("[Gemini Service SMS Alert Error]:", error.message);

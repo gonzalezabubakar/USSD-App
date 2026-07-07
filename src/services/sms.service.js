@@ -10,8 +10,6 @@ const { limitMessageLength } = require('../utils/string.util');
 
 class SmsService {
     async sendAdvisorySms(phoneNumber, diagnosisResult) {
-        const timestamp = new Date().toISOString();
-        console.log(`sms services ${timestamp} imetuma sms kwenda ${phoneNumber}`)
         try {
             if (!phoneNumber) throw new Error("Namba ya simu haijapatikana.");
 
@@ -21,23 +19,34 @@ class SmsService {
 
             if (cleanedPhone.length < 12) return null;
 
-            let finalMessage = "";
+            const diagnosis = diagnosisResult?.diagnosis || "";
+            const recommendation = diagnosisResult?.recommendation || "";
+            const source = diagnosisResult?.source || "";
 
-            // Kama ujumbe umetoka kwa Gemini (una neno TAHADHARI), tunautuma mzima kama ulivyo
-            if (diagnosisResult.recommendation && diagnosisResult.recommendation.includes("TAHADHARI")) {
-                finalMessage = diagnosisResult.recommendation;
+            let rawMessage = "";
+
+            const niUjumbeWaDharuraAuJumla = 
+                source === "SYSTEM_FALLBACK" || 
+                source === "GEMINI_GENERAL_ADVICE" || 
+                diagnosis.includes("Uchunguzi") || 
+                diagnosis.includes("Tatizo la") ||
+                diagnosis.includes("Ushauri");
+
+            if (niUjumbeWaDharuraAuJumla) {
+                // Ushauri ghafi wa haraka usio na lebo za kishule
+                rawMessage = recommendation;
+            } else if (recommendation.includes("TAHADHARI")) {
+                rawMessage = recommendation;
             } else {
-                // Kama ni majibu ya kawaida ya USSD (Reactive mode), tunatumia muundo wa kawaidi
-                let rawMessage = `Ndugu mkulima,\n` +
-                                 `ugonjwa ni ${diagnosisResult.diagnosis}\n` +
-                                 `muhimu kufata ushauri huu ${diagnosisResult.recommendation}\n` +
-                                 `Asante.`;
-                
-                // Tunalimit herufi 160 kwa jumbe za kawaida za USSD tu
-                finalMessage = limitMessageLength(rawMessage, 160);
+                // Kama ni ugonjwa uliothibitishwa, weka kwa ufupi wa hali ya juu
+                rawMessage = `Zao lina ${diagnosis}. ${recommendation}`;
             }
 
-            console.log(`[SmsService]: Inatuma SMS (Herufi: ${finalMessage.length}) kwenda ${cleanedPhone}...`);
+            //TUNALAZIMISHA: Hapa ujumbe wote unakatwa kwa weledi usizidi herufi 130!
+            // Hii itabadilisha gazeti kuwa "Ushauri wa Huduma ya Kwanza" na kuweka wito wa kuendeleza chat.
+            const finalMessage = limitMessageLength(rawMessage, 130);
+
+            console.log(`[SmsService]: Inatuma SMS fupi (Herufi: ${finalMessage.length}) kwenda ${cleanedPhone}...`);
 
             const response = await sms.send({
                 to: [cleanedPhone], 

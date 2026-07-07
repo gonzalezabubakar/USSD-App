@@ -4,7 +4,7 @@ const proactiveAlerts = require('../tasks/proactiveAlerts.js');
 
 const initAlertsCronJob = () => {
     // Kila siku saa 8:00 Asubuhi
-    cron.schedule('0 8  * * *', async () => {
+    cron.schedule('0 8 * * *', async () => {
         console.log("[Cron Job]: Inaanza kuangalia na kutuma tahadhari asubuhi...");
         try {
             await proactiveAlerts.checkAndSendProactiveAlerts();

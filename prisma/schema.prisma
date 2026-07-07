@@ -88,3 +88,10 @@ model FileMeta {
   lastMd5   String            // Itatunza alama ya vidole ya faili (Hash)
   updatedAt DateTime @updatedAt
 }
+
+model SystemConfig {
+  id         Int      @id @default(autoincrement())
+  key        String   @unique // Mfano: "active_gemini_cache_name" au "last_data_hash"
+  value      String   @db.Text
+  updated_at DateTime @updatedAt
+}
