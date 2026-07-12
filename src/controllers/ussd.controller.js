@@ -157,7 +157,7 @@ exports.handleUssd = async (req, res) => {
                                 const formattedName = chosenFarm.crop.crop_name.charAt(0).toUpperCase() + chosenFarm.crop.crop_name.slice(1);
                                 response = `END Hongera! ${firstName} Mavuno mema kwenye shamba la ${formattedName}.`;
                             } else if (historyChoice === '3') {
-                                response = `END USHAURI ULIOPITA\nUgonjwa ${farmHistory.diagnosis}\nUlishauriwa ${farmHistory.recommendation}`;
+                                response = `END USHAURI ULIOPITA\n ${farmHistory.diagnosis}\nUlishauriwa ${farmHistory.recommendation}`;
                             } else {
                                 response = `END Chaguo si sahihi. Anza upya.`;
                             }

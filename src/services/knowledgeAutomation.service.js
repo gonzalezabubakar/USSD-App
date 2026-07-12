@@ -4,33 +4,38 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
+const pdfParse = require('pdf-parse');
+const { MongoClient } = require('mongodb');
+const { GoogleGenerativeAIEmbeddings } = require('@langchain/google-genai');
+const { MongoDBAtlasVectorSearch } = require("@langchain/mongodb");
+const { RecursiveCharacterTextSplitter } = require('langchain/text_splitter');
+const { Document } = require('@langchain/core/documents');
 
 class KnowledgeAutomationService {
     
     /**
-     * INDAO NA KUHIFADHI MA-PDF YA SERIKALI KWENYE DISK YA NDANI
+     * TAFUTA NA UPANDE MA-PDF YA SERIKALI KWENYE DISK YA SERVER (OFFLINE/BACKGROUND)
      */
     async downloadAndParseGovDocs() {
         try {
-            console.log("[Auto-Downloader]: Inaanza Deep Scraping...");
+            console.log("📥 [Auto-Downloader]: Inaanza Deep Scraping kwenye tovuti za serikali...");
 
-            // LAZIMISHA FOLDER LITENGENEZWE KWENYE PROJECT ROOT
             const docsDir = path.join(process.cwd(), 'storage', 'agriculture_docs');
             if (!fs.existsSync(docsDir)) {
                 fs.mkdirSync(docsDir, { recursive: true });
-                console.log(`[Automation]: Folder jipya limetengenezwa hapa: ${docsDir}`);
+                console.log(`📂 [Automation]: Folder jipya limetengenezwa hapa: ${docsDir}`);
             }
 
             for (const institution of GOVERNMENT_AGRI_SOURCES) {
-                console.log(`\n[Taasisi]: Inachakata data za ${institution.name}...`);
+                console.log(`\n🏢 [Taasisi]: Inachakata data za ${institution.name}...`);
                 
                 for (const page of institution.pages) {
-                    console.log(`[Kategoria]: Inafungua "${page.category}"...`);
+                    console.log(`🌾 [Kategoria]: Inafungua "${page.category}"...`);
                     
                     try {
                         const response = await axios.get(page.url, { 
                             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-                            timeout: 20000 
+                            timeout: 25000 
                         });
                         
                         const $ = cheerio.load(response.data);
@@ -44,8 +49,9 @@ class KnowledgeAutomationService {
                             }
                         });
 
+                        // Pakua PDF 1 ya hivi karibuni kabisa kwa kila kategoria ili kulinda space na tokens
                         const latestLinks = pdfLinks.slice(0, 1);
-                        console.log(`Zimepatikana PDF ${pdfLinks.length}. Inaanza kupakua...`);
+                        console.log(`🔍 Zimepatikana PDF ${pdfLinks.length}. Inaanza kupakua ya kisasa zaidi...`);
 
                         for (const pdfUrl of latestLinks) {
                             const safeCategoryName = page.category.replace(/\s+/g, '_');
@@ -53,10 +59,9 @@ class KnowledgeAutomationService {
                             const finalFileName = `${institution.name}_${safeCategoryName}_${originalFileName}`;
                             const localFilePath = path.join(docsDir, finalFileName);
 
-                            console.log(`Inapakua na Kusave Kwenye Disk: ${finalFileName}...`);
+                            console.log(`💾 Inapakua na Kusave: ${finalFileName}...`);
                             
                             const writer = fs.createWriteStream(localFilePath);
-                            
                             const pdfResponse = await axios({
                                 method: 'get',
                                 url: pdfUrl,
@@ -71,95 +76,117 @@ class KnowledgeAutomationService {
                                 writer.on('error', reject);
                             });
 
-                            console.log(`Faili Limeshuka na Kuhifadhiwa kwenye Disk salama.`);
+                            console.log(`✅ Faili limeshuka vizuri kwenye disk.`);
                         }
 
                     } catch (siteError) {
-                        console.error(`[Mkwamo kwenye ${page.category}]:`, siteError.message);
+                        console.error(`⚠️ [Mkwamo kwenye ${page.category}]:`, siteError.message);
                         continue; 
                     }
                 }
             }
-
             return true;
         } catch (error) {
-            console.error("[Auto-Downloader Critical Error]:", error.message);
+            console.error("❌ [Auto-Downloader Critical Error]:", error.message);
             return false;
         }
     }
 
     /**
-     * INAPAKIA MA-PDF YOTE KWENYE GOOGLE AI STUDIO KAMA FAILI ASILIA (NATIVE FILE API)
+     * MTAMBO MPYA: INASOMA MA-PDF, INAYAKATA (CHUNKING), INATENGENEZA VECTORS 
+     * NA KUZIMWAGA MOJA KWA MOJA MONGODB ATLAS VECTOR SEARCH
      */
-    async refreshGeminiContextCache() {
+    async syncDocsToMongoDBAtlas() {
+        const client = new MongoClient(process.env.MONGODB_ATLAS_URI);
         try {
-            // 1. Washa mtambo wa kupakua ma-PDF kwenye disk yetu
-            await this.downloadAndParseGovDocs(); 
-            
+            // 1. Shusha ma-PDF mapya kwanza kutoka serikalini
+            const downloadSuccess = await this.downloadAndParseGovDocs();
+            if (!downloadSuccess) throw new Error("Scraping ya ma-PDF imefeli.");
+
             const docsDir = path.join(process.cwd(), 'storage', 'agriculture_docs');
-            
-            if (!fs.existsSync(docsDir)) {
-                console.log("[Automation]: Folder la kuhifadhi mafile halipo kabisa.");
-                return false;
-            }
+            if (!fs.existsSync(docsDir)) return false;
 
             const files = fs.readdirSync(docsDir).filter(f => f.endsWith('.pdf'));
-
             if (files.length === 0) {
-                console.log("Automation]: Hakuna mafile ya PDF yaliyopatikana kwenye folda.");
+                console.log("ℹ️ [Automation]: Hakuna ma-PDF mapya kwenye folda ya kuchakata.");
                 return false;
             }
 
-            console.log(`\n[Automation]: Zimepatikana PDF ${files.length} kwenye disk. Inaanza kupakia Google AI Studio...`);
+            console.log(`\n🧠 [Vector Pipeline]: Zimepatikana PDF ${files.length}. Inaanza kuziandaa kwa ajili ya MongoDB Atlas...`);
             
-            // 2. Washa Google Gen AI SDK Mpya kabisa
-            const { GoogleGenAI } = require('@google/genai');
-            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+            await client.connect();
+            const db = client.db("agricultural_advisory_system");
+            const collection = db.collection("pdf_knowledge_vectors");
 
-            const uploadedUris = [];
-
-         // LOOP: Tunapita kwenye kila PDF na kulirusha Google kwa njia ya uhakika
-            for (const fileName of files) {
-                const filePath = path.join(docsDir, fileName);
-                
-                // 1. Hakikisha ukubwa wa faili uko sawa kabla ya kurusha
-                const stats = fs.statSync(filePath);
-                if (stats.size === 0) {
-                    console.log(`Lilijaribiwa faili tupu, linarukwa: ${fileName}`);
-                    continue;
-                }
-
-                console.log(`Inapakia faili (${(stats.size / (1024 * 1024)).toFixed(2)} MB): ${fileName}...`);
-
-                // 2. Upakiaji Rasmi kwa kutumia muundo sahihi wa SDK mpya
-                const uploadResult = await ai.files.upload({
-                    file: filePath,
-                    mimeType: 'application/pdf'
-                });
-
-                console.log(`Limepakiwa salama! URI: ${uploadResult.uri}`);
-                
-                // Tunatunza muundo sahihi kwa ajili ya Prisma na Gemini Engine
-                uploadedUris.push({
-                    fileUri: uploadResult.uri,
-                    mimeType: 'application/pdf'
-                });
-            }
-
-            // 3. Hifadhi Array ya URI zote kwenye Database ya Prisma kama String ya JSON
-            const prisma = require('../config/prisma');
-            await prisma.systemConfig.upsert({
-                where: { key: "active_pdf_uris" },
-                update: { value: JSON.stringify(uploadedUris) },
-                create: { key: "active_pdf_uris", value: JSON.stringify(uploadedUris) }
+            // REKEBISHO LA MUUNDO WA GOOGLE EMBEDDINGS HAPA:
+            const embeddings = new GoogleGenerativeAIEmbeddings({
+                apiKey: process.env.GEMINI_API_KEY,
+                model: "models/text-embedding-005", // ✅ Alama ya 'model' na njia kamili yenye 'models/'
             });
 
-            console.log("\n[Automation]: Mfumo umekamilika! URI za ma-PDF yote zimehifadhiwa kwenye DB.");
+            // Chombo cha kukata thresholds za herufi
+            const textSplitter = new RecursiveCharacterTextSplitter({
+                chunkSize: 600,
+                chunkOverlap: 120
+            });
+
+            // Loop ya kupita kwenye kila PDF na kuifanyia mabadiliko ya ki-Vector
+            for (const fileName of files) {
+                const filePath = path.join(docsDir, fileName);
+                console.log(`\n⚡ Inachakata faili: ${fileName}`);
+
+                const dataBuffer = fs.readFileSync(filePath);
+                const pdfData = await pdfParse(dataBuffer);
+                const rawText = pdfData.text;
+
+                if (!rawText || rawText.trim().length === 0) continue;
+
+                const chunks = await textSplitter.splitText(rawText);
+                console.log(`🧩 Faili limekatwa vipande ${chunks.length}.`);
+
+                // Smart Routing Detection: Tambua jina la zao kutokana na jina la faili
+                let cropName = "Jumla"; 
+                const lowerFileName = fileName.toLowerCase();
+                if (lowerFileName.includes("mahindi")) cropName = "mahindi";
+                else if (lowerFileName.includes("alizeti")) cropName = "alizeti";
+                else if (lowerFileName.includes("mpunga")) cropName = "mpunga";
+                else if (lowerFileName.includes("maharage")) cropName = "maharage";
+
+                const docs = chunks.map((chunk, index) => {
+                    return new Document({
+                        pageContent: chunk,
+                        metadata: {
+                            crop_name: cropName,
+                            source: fileName,
+                            chunk_id: index,
+                            synced_at: new Date()
+                        }
+                    });
+                });
+
+                console.log(`🚀 Inapakia vipande ${docs.length} huko MongoDB Atlas Vector Store...`);
+                
+                // Sukuma vectors zote Atlas kwa mpigo mmoja
+                await MongoDBAtlasVectorSearch.fromDocuments(docs, embeddings, {
+                    collection,
+                    indexName: "vector_index", 
+                    textKey: "content",
+                    embeddingKey: "embedding",
+                });
+                
+                // Futa faili la PDF kwenye disk baada ya kulihamishia Atlas salama ili server isijae space
+                fs.unlinkSync(filePath);
+                console.log(`🗑️ [Safi]: Faili la kienyeji ${fileName} limefutwa, liko salama wingu la Atlas.`);
+            }
+
+            console.log("\n🎯 [Kazi Imekamilika]: Ma-PDF yote yamesafishwa na kusawazishwa (Synced) huko MongoDB Atlas kama Vectors!");
             return true;
 
         } catch (error) {
-            console.error("[Automation Critical Error]: Imefeli kupakia faili Google:", error.message);
+            console.error("❌ [Automation Pipeline Critical Error]:", error.message);
             return false;
+        } finally {
+            await client.close();
         }
     }
 }
